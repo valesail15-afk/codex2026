@@ -65,7 +65,7 @@ const Dashboard: React.FC = () => {
       title: '比赛信息',
       key: 'match',
       render: (record: any) => (
-        <Space direction="vertical" size={0}>
+        <Space orientation="vertical" size={0}>
           <Text strong>
             {record.league}: {record.home_team} vs {record.away_team}
           </Text>
@@ -122,7 +122,7 @@ const Dashboard: React.FC = () => {
       title: '串关比赛',
       key: 'match',
       render: (record: any) => (
-        <Space direction="vertical" size={0}>
+        <Space orientation="vertical" size={0}>
           <Text strong>
             {record.league_1}: {record.home_team_1} vs {record.away_team_1}
           </Text>
@@ -142,7 +142,7 @@ const Dashboard: React.FC = () => {
       title: '方向',
       key: 'side',
       render: (record: any) => (
-        <Space direction="vertical" size={4}>
+        <Space orientation="vertical" size={4}>
           <Tag color="blue">{`${record.side_1} @ ${(record.odds_1 || 0).toFixed(2)}`}</Tag>
           <Tag color="cyan">{`${record.side_2} @ ${(record.odds_2 || 0).toFixed(2)}`}</Tag>
         </Space>

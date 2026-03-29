@@ -101,8 +101,12 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   }, [navigate]);
 
   useEffect(() => {
+    if (location.pathname === '/login') {
+      setLoading(false);
+      return;
+    }
     fetchUser();
-  }, []);
+  }, [fetchUser, location.pathname]);
 
   useEffect(() => {
     const interceptor = axios.interceptors.response.use(

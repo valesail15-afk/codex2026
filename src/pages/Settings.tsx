@@ -177,7 +177,7 @@ const Settings: React.FC = () => {
       </Card>
 
       <div style={{ marginTop: 20, textAlign: 'center' }}>
-        <Space direction="vertical">
+        <Space orientation="vertical">
           <Text type="secondary">
             <SafetyCertificateOutlined /> 足球套利系统
           </Text>

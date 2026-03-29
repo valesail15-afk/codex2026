@@ -86,10 +86,10 @@ const renderOutcomeTag = (label: string, odds: number | undefined, color: 'win' 
 };
 
 const renderJcOutcomeCell = (label: string, color: 'win' | 'draw' | 'lose', normal?: number, handicap?: number) => (
-  <Space direction="vertical" size={4}>
+  <Space orientation="vertical" size={4}>
     {renderOutcomeTag(label, normal, color)}
     {formatOdds(handicap) !== '-' ? (
-      <Tag color={oddsColorByResult[color]} bordered={false} style={{ opacity: 0.65 }}>
+      <Tag color={oddsColorByResult[color]} variant="filled" style={{ opacity: 0.65 }}>
         {`让球 ${label} @ ${formatOdds(handicap)}`}
       </Tag>
     ) : null}
@@ -368,7 +368,7 @@ const MatchList: React.FC = () => {
         </Space>
       </div>
 
-      <Card className="shadow-sm" bodyStyle={{ padding: 10 }}>
+      <Card className="shadow-sm" styles={{ body: { padding: 10 } }}>
         <Table
           dataSource={matches}
           columns={columns}
