@@ -1,0 +1,87 @@
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import db from './db';
+
+const jwtSecretFromEnv = process.env.JWT_SECRET;
+if (!jwtSecretFromEnv || jwtSecretFromEnv === 'your-secret-key') {
+  throw new Error('JWT_SECRET 未配置或使用了不安全默认值，请在环境变量中设置高强度密钥。');
+}
+const JWT_SECRET = jwtSecretFromEnv;
+
+export interface AuthRequest extends Request {
+  user?: {
+    id: number;
+    username: string;
+    role: string;
+    sid: string;
+  };
+}
+
+function isExpired(expiresAt?: string | null) {
+  if (!expiresAt) return false;
+  const t = new Date(expiresAt).getTime();
+  return Number.isFinite(t) && t <= Date.now();
+}
+
+function invalidateAllSessions(userId: number) {
+  db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND is_active = 1').run(userId);
+}
+
+export const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction) => {
+  const token = req.cookies.token;
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  jwt.verify(token, JWT_SECRET, (err: any, payload: any) => {
+    if (err || !payload?.id || !payload?.sid) return res.status(401).json({ error: 'Unauthorized' });
+
+    const dbUser = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.id) as any;
+    if (!dbUser) return res.status(401).json({ error: 'User not found' });
+
+    const session = db
+      .prepare('SELECT * FROM user_sessions WHERE session_id = ? AND user_id = ? AND is_active = 1')
+      .get(payload.sid, payload.id) as any;
+    if (!session) return res.status(401).json({ error: 'Session invalid' });
+
+    if (session.expires_at && new Date(session.expires_at).getTime() <= Date.now()) {
+      db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = CURRENT_TIMESTAMP WHERE id = ?').run(session.id);
+      return res.status(401).json({ error: 'Session expired' });
+    }
+
+    const lockedByTime = dbUser.lock_until ? new Date(dbUser.lock_until).getTime() > Date.now() : false;
+    if (dbUser.status === 'locked' || dbUser.is_locked || lockedByTime) {
+      return res.status(403).json({ error: 'Account locked', code: 'ACCOUNT_LOCKED', lock_until: dbUser.lock_until || null });
+    }
+
+    if (dbUser.role !== 'Admin' && isExpired(dbUser.expires_at)) {
+      db.prepare("UPDATE users SET status = 'expired', is_locked = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(dbUser.id);
+      invalidateAllSessions(dbUser.id);
+      return res.status(403).json({ error: 'Account expired', code: 'ACCOUNT_EXPIRED', expires_at: dbUser.expires_at });
+    }
+
+    db.prepare('UPDATE user_sessions SET last_activity_at = CURRENT_TIMESTAMP WHERE id = ?').run(session.id);
+    // 权限以数据库实时角色为准，避免 token 中旧 role 导致越权
+    req.user = { id: dbUser.id, username: dbUser.username, role: dbUser.role, sid: payload.sid };
+    next();
+  });
+};
+
+export const authorizeAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (req.user?.role !== 'Admin') return res.status(403).json({ error: 'Admin access required' });
+  next();
+};
+
+export const generateToken = (user: { id: number; username: string; role: string; sid: string }) => {
+  return jwt.sign(user, JWT_SECRET, { expiresIn: '24h' });
+};
+
+export const logAction = (userId: number | null, username: string | null, action: string, content: string, ip: string) => {
+  db.prepare('INSERT INTO logs (user_id, username, action, content, ip) VALUES (?, ?, ?, ?, ?)').run(userId, username, action, content, ip);
+};
+
+export const revokeSession = (sessionId: string) => {
+  db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = CURRENT_TIMESTAMP WHERE session_id = ?').run(sessionId);
+};
+
+export const revokeAllUserSessions = (userId: number) => {
+  invalidateAllSessions(userId);
+};

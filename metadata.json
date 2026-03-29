@@ -1,0 +1,7 @@
+{
+  "name": "足球套利系统",
+  "description": "基于竞彩与皇冠赔率的双平台无风险对冲套利计算与监控系统",
+  "requestFramePermissions": [
+    "notifications"
+  ]
+}

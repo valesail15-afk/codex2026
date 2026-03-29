@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+.solid-blue-radio .ant-radio-button-wrapper-checked {
+  background-color: #1677ff !important;
+  border-color: #1677ff !important;
+  color: #fff !important;
+}
+
+.solid-blue-radio .ant-radio-button-wrapper-checked::before {
+  background-color: #1677ff !important;
+}
+
+.solid-blue-radio .ant-radio-button-wrapper:not(:first-child)::before {
+  display: none !important;
+}
+
+.solid-blue-btn {
+  border-radius: 8px !important;
+}
+
+.solid-blue-btn.ant-btn-primary {
+  background-color: #1677ff !important;
+  border-color: #1677ff !important;
+  color: #fff !important;
+}
