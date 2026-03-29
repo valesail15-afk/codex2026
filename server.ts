@@ -484,6 +484,9 @@ async function startServer() {
   app.delete('/api/admin/users/:id', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
     const { id } = req.params;
     try {
+      if (Number(id) === req.user!.id) {
+        return res.status(400).json({ error: '管理员不能删除自己' });
+      }
       const user = db.prepare('SELECT username FROM users WHERE id = ?').get(id) as any;
       db.transaction(() => {
         db.prepare('DELETE FROM user_sessions WHERE user_id = ?').run(id);

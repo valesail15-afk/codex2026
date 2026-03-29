@@ -191,13 +191,14 @@ const UserManagement: React.FC = () => {
           )}
           <Popconfirm
             title="确定删除该用户吗？"
+            disabled={record.id === currentUser?.id}
             onConfirm={async () => {
               await axios.delete(`/api/admin/users/${record.id}`);
               message.success('已删除');
               fetchUsers();
             }}
           >
-            <Button icon={<DeleteOutlined />} danger>
+            <Button icon={<DeleteOutlined />} danger disabled={record.id === currentUser?.id}>
               删除
             </Button>
           </Popconfirm>
