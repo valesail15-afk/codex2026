@@ -156,7 +156,7 @@ const ParlayCalculator: React.FC = () => {
             </div>
           </Card>
           <Card title="对冲策略选择">
-            <Space direction="vertical" style={{ width: '100%' }}>
+                  <Space orientation="vertical" style={{ width: '100%' }}>
               {(candidates || []).map((item: any, idx: number) => (
                 <Button key={`${item.id}_${idx}`} className="solid-blue-btn" block type={(selectedStrategy?.name || '') === (item.best_strategy?.name || '') ? 'primary' : 'default'} onClick={() => setSelected(item.best_strategy)}>
                   {(item.best_strategy?.name || '策略')} ({((item.profit_rate || 0) * 100).toFixed(2)}%)
@@ -188,7 +188,7 @@ const ParlayCalculator: React.FC = () => {
                     dataIndex: 'amount',
                     width: '20%' as any,
                     render: (v: number, row: any) => (
-                      <Space direction="vertical" size={0}>
+                    <Space orientation="vertical" size={0}>
                         <Text strong>{currency(v)}</Text>
                         <Text style={{ color: Number(row.share || 0) > 0 ? '#1677ff' : '#999' }}>实投: {currency(row.realAmount)}</Text>
                       </Space>
