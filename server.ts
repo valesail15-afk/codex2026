@@ -169,6 +169,11 @@ function getExpectedOrigin(req: express.Request) {
   return `${proto}://${host}`.toLowerCase();
 }
 
+function isHttpsRequest(req: express.Request) {
+  const xfProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  return req.secure || xfProto === 'https';
+}
+
 function isTrustedOrigin(req: express.Request) {
   const expectedOrigin = getExpectedOrigin(req);
   if (!expectedOrigin) return true;
@@ -304,10 +309,11 @@ async function startServer() {
 
       const token = generateToken({ id: user.id, username: user.username, role: user.role, sid });
       const isProduction = process.env.NODE_ENV === 'production';
+      const useSecureCookie = isProduction && isHttpsRequest(req);
       res.cookie('token', token, {
         httpOnly: true,
         maxAge: 24 * 60 * 60 * 1000,
-        secure: isProduction,
+        secure: useSecureCookie,
         sameSite: 'lax'
       });
       
@@ -508,6 +514,8 @@ async function startServer() {
       }
       const user = db.prepare('SELECT username FROM users WHERE id = ?').get(id) as any;
       db.transaction(() => {
+        db.prepare('DELETE FROM arbitrage_opportunities WHERE user_id = ?').run(id);
+        db.prepare('DELETE FROM parlay_opportunities WHERE user_id = ?').run(id);
         db.prepare('DELETE FROM user_sessions WHERE user_id = ?').run(id);
         db.prepare('DELETE FROM system_settings WHERE user_id = ?').run(id);
         db.prepare('DELETE FROM bet_records WHERE user_id = ?').run(id);
@@ -858,11 +866,12 @@ async function startServer() {
       return res.status(403).json({ error: 'Only manually added matches can be deleted' });
     }
     db.transaction(() => {
-      db.prepare('DELETE FROM matches WHERE match_id = ?').run(id);
-      db.prepare('DELETE FROM jingcai_odds WHERE match_id = ?').run(id);
-      db.prepare('DELETE FROM crown_odds WHERE match_id = ?').run(id);
       db.prepare('DELETE FROM arbitrage_opportunities WHERE match_id = ?').run(id);
       db.prepare('DELETE FROM parlay_opportunities WHERE match_id_1 = ? OR match_id_2 = ?').run(id, id);
+      db.prepare('DELETE FROM bet_records WHERE match_id = ?').run(id);
+      db.prepare('DELETE FROM jingcai_odds WHERE match_id = ?').run(id);
+      db.prepare('DELETE FROM crown_odds WHERE match_id = ?').run(id);
+      db.prepare('DELETE FROM matches WHERE match_id = ?').run(id);
     })();
     res.json({ status: 'ok' });
   });
@@ -1040,11 +1049,7 @@ async function startServer() {
         await CrawlerService.syncFromExternalScraper();
         setLastSyncTimeMs(Date.now());
       } else {
-        console.log('Matches exist, scanning opportunities for all users...');
-        const users = db.prepare("SELECT id FROM users WHERE role = 'User'").all() as any[];
-        for (const user of users) {
-          await CrawlerService.scanOpportunities(user.id).catch(console.error);
-        }
+        console.log('Matches exist, skip blocking full scan at startup (will rely on auto scan).');
       }
     } catch (err) {
       console.error('Failed to run initial data check:', err);
@@ -1090,4 +1095,3 @@ async function startServer() {
 }
 
 startServer();
-
