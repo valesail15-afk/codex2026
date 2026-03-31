@@ -139,7 +139,8 @@ async function selectCrownOdds(page) {
     }));
   });
 
-  const crownOption = options.find((option) => option.value === '280' || /皇冠|鐨囧啝|crown/i.test(option.label));
+  const crownLabelPattern = new RegExp('\\u7687\\u51A0|crown', 'i');
+  const crownOption = options.find((option) => option.value === '280' || crownLabelPattern.test(option.label));
   if (!crownOption) {
     throw new Error('crown odds option not found');
   }
@@ -149,7 +150,12 @@ async function selectCrownOdds(page) {
 }
 
 async function closeHiddenMatches(page) {
-  const candidates = ['text=/宸查殣钘?', 'text=/鏄剧ず/', 'text=/灞曞紑/', 'text=/鏇村/'];
+  const candidates = [
+    'text=/\\u5DF2\\u9690\\u85CF|\\u9690\\u85CF/',
+    'text=/\\u663E\\u793A/',
+    'text=/\\u5C55\\u5F00/',
+    'text=/\\u66F4\\u591A/',
+  ];
   for (const selector of candidates) {
     const locators = await page.locator(selector).all();
     for (const locator of locators.slice(0, 5)) {
@@ -163,7 +169,9 @@ async function closeHiddenMatches(page) {
 
 async function selectCrownAsia(page) {
   try {
-    const averageTrigger = page.locator('text=/百家平均|平均/').first();
+    const averageTrigger = page
+      .locator('text=/\\u767E\\u5BB6\\u5E73\\u5747|\\u5E73\\u5747|Average/i')
+      .first();
     if (await averageTrigger.count()) {
       await averageTrigger.click({ timeout: 1500 });
       await page.waitForTimeout(800);
@@ -171,7 +179,9 @@ async function selectCrownAsia(page) {
   } catch {}
 
   try {
-    const crownAsiaOption = page.locator('text=/皇冠亚盘|亚盘|Crown/i').first();
+    const crownAsiaOption = page
+      .locator('text=/\\u7687\\u51A0\\u4E9A\\u76D8|\\u4E9A\\u76D8|Crown/i')
+      .first();
     if (await crownAsiaOption.count()) {
       await crownAsiaOption.click({ timeout: 1500 });
       await page.waitForTimeout(2000);
@@ -183,7 +193,8 @@ async function selectCrownAsia(page) {
     const selectLocator = page.locator('select').first();
     if (await selectLocator.count()) {
       const options = await selectLocator.locator('option').allTextContents();
-      const index = options.findIndex((text) => /皇冠亚盘|亚盘|Crown/i.test(text || ''));
+      const crownAsiaPattern = new RegExp('\\u7687\\u51A0\\u4E9A\\u76D8|\\u4E9A\\u76D8|Crown', 'i');
+      const index = options.findIndex((text) => crownAsiaPattern.test(text || ''));
       if (index >= 0) {
         const value = await selectLocator.locator('option').nth(index).getAttribute('value');
         if (value) {
@@ -315,7 +326,7 @@ function normalizeTradeRow(row) {
   const { standardOdds, handicapOdds } = extractTradeOddsGroups(oddsCell);
 
   const childNums = handicapChildTexts
-    .map((text) => (text || '').replace(/^单关/u, '').trim())
+    .map((text) => (text || '').replace(/^\\u5355\\u5173/u, '').trim())
     .map((text) => text.match(/[+-]?\d+(?:\.\d+)?/g))
     .filter(Boolean)
     .map((arr) => arr[arr.length - 1]);

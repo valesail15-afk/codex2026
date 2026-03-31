@@ -1,4 +1,4 @@
-﻿import express from 'express';
+import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
@@ -225,7 +225,7 @@ async function startServer() {
   }
 
   // Auth API
-  app.post('/api/auth/login', (req, res) => {
+  app.post('/api/auth/login', async (req, res) => {
     try {
       const { username, password } = req.body;
       const normalizedUsername = typeof username === 'string' ? username.trim() : '';
@@ -291,6 +291,17 @@ async function startServer() {
       db.prepare("INSERT INTO user_sessions (session_id, user_id, device_id, ip, user_agent, is_active, expires_at) VALUES (?, ?, ?, ?, ?, 1, datetime('now', '+1 day'))")
         .run(sid, user.id, deviceId, ip, userAgent);
 
+      if (user.role === 'User') {
+        try {
+          const existingOppCount = db.prepare('SELECT COUNT(*) as count FROM arbitrage_opportunities WHERE user_id = ?').get(user.id) as { count?: number } | undefined;
+          if ((existingOppCount?.count || 0) === 0) {
+            await CrawlerService.scanOpportunities(user.id);
+          }
+        } catch (scanErr) {
+          console.error(`Failed to initialize opportunities for user ${user.id}:`, scanErr);
+        }
+      }
+
       const token = generateToken({ id: user.id, username: user.username, role: user.role, sid });
       const isProduction = process.env.NODE_ENV === 'production';
       res.cookie('token', token, {
@@ -345,7 +356,7 @@ async function startServer() {
     res.json(users);
   });
 
-  app.post('/api/admin/users', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
+  app.post('/api/admin/users', authenticateToken, authorizeAdmin, async (req: AuthRequest, res) => {
     const { username, password, role, package_name, expires_at, max_duration } = req.body;
     try {
       const hashedPassword = bcrypt.hashSync(password, 10);
@@ -377,6 +388,14 @@ async function startServer() {
       ];
       const insertSetting = db.prepare('INSERT INTO system_settings (user_id, key, value) VALUES (?, ?, ?)');
       defaultSettings.forEach(([key, value]) => insertSetting.run(result.lastInsertRowid, key, value));
+
+      if (role === 'User') {
+        try {
+          await CrawlerService.scanOpportunities(Number(result.lastInsertRowid));
+        } catch (scanErr) {
+          console.error(`Failed to precompute opportunities for new user ${result.lastInsertRowid}:`, scanErr);
+        }
+      }
 
       logAction(req.user!.id, req.user!.username, 'user_create', `Created user ${username}`, req.ip || '');
       res.json({ id: result.lastInsertRowid });
@@ -505,6 +524,36 @@ async function startServer() {
   app.get('/api/admin/logs', authenticateToken, authorizeAdmin, (req, res) => {
     const logs = db.prepare('SELECT * FROM logs ORDER BY created_at DESC LIMIT 1000').all();
     res.json(logs);
+  });
+
+  app.get('/api/admin/scrape-health', authenticateToken, authorizeAdmin, (req, res) => {
+    const limitRaw = Number.parseInt(String(req.query.limit || 50), 10);
+    const limit = Number.isFinite(limitRaw) ? Math.max(10, Math.min(200, limitRaw)) : 50;
+    const rows = db
+      .prepare(
+        `SELECT id, source, status, fetched_total, filtered_total, synced_total, complete_total,
+                hga_status, hga_count, base_count, merged_count, playwright_fallback_used, note, duration_ms, created_at
+         FROM scrape_health_logs
+         ORDER BY id DESC
+         LIMIT ?`
+      )
+      .all(limit) as any[];
+
+    const stats = rows.reduce(
+      (acc: any, row: any) => {
+        acc.total += 1;
+        if (row.status === 'ok' || row.status === 'unchanged') acc.success += 1;
+        if (row.status === 'skipped') acc.skipped += 1;
+        if (row.status === 'empty' || row.status === 'error') acc.failed += 1;
+        if (row.playwright_fallback_used) acc.playwright_used += 1;
+        acc.avg_duration_ms += Number(row.duration_ms || 0);
+        return acc;
+      },
+      { total: 0, success: 0, failed: 0, skipped: 0, playwright_used: 0, avg_duration_ms: 0 }
+    );
+    if (stats.total > 0) stats.avg_duration_ms = Math.round(stats.avg_duration_ms / stats.total);
+
+    res.json({ stats, rows });
   });
 
   // API 璺敱 (Protected)
@@ -647,10 +696,13 @@ async function startServer() {
       WHERE o.base_type = ? AND o.user_id = ?
       ORDER BY o.profit_rate DESC
     `).all(baseType, req.user!.id);
-    res.json(opps.map((o: any) => ({
-      ...o,
-      best_strategy: o.best_strategy ? JSON.parse(o.best_strategy) : null
-    })));
+    const rows = opps
+      .map((o: any) => ({
+        ...o,
+        best_strategy: o.best_strategy ? JSON.parse(o.best_strategy) : null
+      }))
+      .filter((o: any) => ArbitrageEngine.hasAllPositiveSingleTotalProfits(o.best_strategy, 0.01));
+    res.json(rows);
   });
 
   app.get('/api/arbitrage/parlay-opportunities', authenticateToken, (req: AuthRequest, res) => {
@@ -658,17 +710,24 @@ async function startServer() {
     const opps = db.prepare(`
       SELECT o.*, 
              m1.league as league_1, m1.home_team as home_team_1, m1.away_team as away_team_1, m1.match_time as match_time_1,
-             m2.league as league_2, m2.home_team as home_team_2, m2.away_team as away_team_2, m2.match_time as match_time_2
+             m2.league as league_2, m2.home_team as home_team_2, m2.away_team as away_team_2, m2.match_time as match_time_2,
+             j1.win_odds as j1_w, j1.draw_odds as j1_d, j1.lose_odds as j1_l,
+             j2.win_odds as j2_w, j2.draw_odds as j2_d, j2.lose_odds as j2_l
       FROM parlay_opportunities o
       JOIN matches m1 ON o.match_id_1 = m1.match_id
       JOIN matches m2 ON o.match_id_2 = m2.match_id
+      LEFT JOIN jingcai_odds j1 ON o.match_id_1 = j1.match_id
+      LEFT JOIN jingcai_odds j2 ON o.match_id_2 = j2.match_id
       WHERE o.base_type = ? AND o.user_id = ?
       ORDER BY o.profit_rate DESC
     `).all(baseType, req.user!.id);
-    res.json(opps.map((o: any) => ({
-      ...o,
-      best_strategy: o.best_strategy ? JSON.parse(o.best_strategy) : null
-    })));
+    const rows = opps
+      .map((o: any) => ({
+        ...o,
+        best_strategy: o.best_strategy ? JSON.parse(o.best_strategy) : null
+      }))
+      .filter((o: any) => ArbitrageEngine.hasAllPositiveParlayCombos(o.best_strategy, 0.01));
+    res.json(rows);
   });
 
   app.get('/api/arbitrage/parlay-opportunities/:id', authenticateToken, (req: AuthRequest, res) => {
@@ -677,18 +736,26 @@ async function startServer() {
     const row = db.prepare(`
       SELECT o.*,
              m1.league as league_1, m1.home_team as home_team_1, m1.away_team as away_team_1, m1.match_time as match_time_1,
-             m2.league as league_2, m2.home_team as home_team_2, m2.away_team as away_team_2, m2.match_time as match_time_2
+             m2.league as league_2, m2.home_team as home_team_2, m2.away_team as away_team_2, m2.match_time as match_time_2,
+             j1.win_odds as j1_w, j1.draw_odds as j1_d, j1.lose_odds as j1_l,
+             j2.win_odds as j2_w, j2.draw_odds as j2_d, j2.lose_odds as j2_l
       FROM parlay_opportunities o
       JOIN matches m1 ON o.match_id_1 = m1.match_id
       JOIN matches m2 ON o.match_id_2 = m2.match_id
+      LEFT JOIN jingcai_odds j1 ON o.match_id_1 = j1.match_id
+      LEFT JOIN jingcai_odds j2 ON o.match_id_2 = j2.match_id
       WHERE o.id = ? AND o.user_id = ? AND o.base_type = ?
       LIMIT 1
     `).get(id, req.user!.id, baseType) as any;
 
     if (!row) return res.status(404).json({ error: 'Parlay opportunity not found' });
+    const parsed = row.best_strategy ? JSON.parse(row.best_strategy) : null;
+    if (!ArbitrageEngine.hasAllPositiveParlayCombos(parsed, 0.01)) {
+      return res.status(404).json({ error: 'Parlay opportunity no longer valid' });
+    }
     res.json({
       ...row,
-      best_strategy: row.best_strategy ? JSON.parse(row.best_strategy) : null
+      best_strategy: parsed
     });
   });
 

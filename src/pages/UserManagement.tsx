@@ -123,11 +123,11 @@ const UserManagement: React.FC = () => {
       title: '用户名',
       dataIndex: 'username',
       key: 'username',
-      width: 180,
+      width: 150,
       render: (v: string) => (
         <div
           style={{
-            maxWidth: 160,
+            maxWidth: 136,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -138,14 +138,20 @@ const UserManagement: React.FC = () => {
         </div>
       ),
     },
-    { title: '角色', dataIndex: 'role', key: 'role', render: (role: string) => <Tag color={role === 'Admin' ? 'gold' : 'blue'}>{role}</Tag> },
-    { title: '套餐', dataIndex: 'package_name', key: 'package_name', width: 120 },
-    { title: '到期时间', dataIndex: 'expires_at', key: 'expires_at', width: 120, render: (v: string) => (v ? dayjs(v).format('YY-MM-DD') : '-') },
+    {
+      title: '角色',
+      dataIndex: 'role',
+      key: 'role',
+      width: 84,
+      render: (role: string) => <Tag color={role === 'Admin' ? 'gold' : 'blue'}>{role}</Tag>,
+    },
+    { title: '套餐', dataIndex: 'package_name', key: 'package_name', width: 100 },
+    { title: '到期时间', dataIndex: 'expires_at', key: 'expires_at', width: 104, render: (v: string) => (v ? dayjs(v).format('YY-MM-DD') : '-') },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 100,
+      width: 88,
       render: (s: string) => {
         const color = s === 'normal' ? 'green' : s === 'expired' ? 'orange' : 'red';
         const text = s === 'normal' ? '正常' : s === 'expired' ? '到期' : '锁定';
@@ -153,27 +159,38 @@ const UserManagement: React.FC = () => {
       },
     },
     {
-      title: '登陆失败',
+      title: '登录失败',
       key: 'login_fail_count',
-      width: 100,
+      width: 88,
       render: (_: any, record: User) => `${record.login_fail_count || 0}次`,
     },
-    { title: '最后登陆', dataIndex: 'last_login_at', key: 'last_login_at', width: 150, render: (v: string) => (v ? dayjs(v).format('YY-MM-DD HH:mm') : '-') },
+    { title: '最后登录', dataIndex: 'last_login_at', key: 'last_login_at', width: 126, render: (v: string) => (v ? dayjs(v).format('YY-MM-DD HH:mm') : '-') },
     {
       title: '操作',
       key: 'action',
-      width: 760,
+      width: 420,
       render: (_: any, record: User) => (
-        <Space wrap>
-          <Button icon={<EditOutlined />} onClick={() => { setEditingUser(record); setModalVisible(true); }}>
+        <Space wrap size={[4, 4]}>
+          <Button size="small" icon={<EditOutlined />} onClick={() => { setEditingUser(record); setModalVisible(true); }}>
             编辑
           </Button>
-          <Button onClick={() => doAction(`/api/admin/users/${record.id}/renew`, '续费成功', { extend_days: 30 })}>续费30天</Button>
-          <Button onClick={() => doAction(`/api/admin/users/${record.id}/renew`, '延长成功', { extend_days: 7 })}>延长7天</Button>
-          <Button onClick={() => doAction(`/api/admin/users/${record.id}/unlock`, '已管理员解锁')}>管理员解锁</Button>
-          <Button onClick={() => doAction(`/api/admin/users/${record.id}/force-logout`, '已强制下线')}>强制下线</Button>
-          <Button onClick={() => openSessions(record)}>在线会话</Button>
+          <Button size="small" onClick={() => doAction(`/api/admin/users/${record.id}/renew`, '续费成功', { extend_days: 30 })}>
+            续费30天
+          </Button>
+          <Button size="small" onClick={() => doAction(`/api/admin/users/${record.id}/renew`, '延长成功', { extend_days: 7 })}>
+            延长7天
+          </Button>
+          <Button size="small" onClick={() => doAction(`/api/admin/users/${record.id}/unlock`, '管理员解锁成功')}>
+            管理解锁
+          </Button>
+          <Button size="small" onClick={() => doAction(`/api/admin/users/${record.id}/force-logout`, '已强制下线')}>
+            强制下线
+          </Button>
+          <Button size="small" onClick={() => openSessions(record)}>
+            在线会话
+          </Button>
           <Button
+            size="small"
             onClick={() => {
               setPasswordUser(record);
               setPasswordModalOpen(true);
@@ -183,11 +200,13 @@ const UserManagement: React.FC = () => {
             重置密码
           </Button>
           {record.status !== 'locked' ? (
-            <Button danger disabled={record.id === currentUser?.id} onClick={() => doAction(`/api/admin/users/${record.id}/freeze`, '已冻结')}>
+            <Button size="small" danger disabled={record.id === currentUser?.id} onClick={() => doAction(`/api/admin/users/${record.id}/freeze`, '已冻结')}>
               冻结
             </Button>
           ) : (
-            <Button onClick={() => doAction(`/api/admin/users/${record.id}/unfreeze`, '已解冻')}>解冻</Button>
+            <Button size="small" onClick={() => doAction(`/api/admin/users/${record.id}/unfreeze`, '已解冻')}>
+              解冻
+            </Button>
           )}
           <Popconfirm
             title="确定删除该用户吗？"
@@ -198,7 +217,7 @@ const UserManagement: React.FC = () => {
               fetchUsers();
             }}
           >
-            <Button icon={<DeleteOutlined />} danger disabled={record.id === currentUser?.id}>
+            <Button size="small" icon={<DeleteOutlined />} danger disabled={record.id === currentUser?.id}>
               删除
             </Button>
           </Popconfirm>
@@ -208,13 +227,14 @@ const UserManagement: React.FC = () => {
   ];
 
   return (
-    <div style={{ maxWidth: 1600, margin: '0 auto' }}>
+    <div style={{ maxWidth: 1480, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <Title level={3} style={{ margin: 0 }}>
           用户管理
         </Title>
         <Space>
           <Button
+            size="small"
             icon={<HistoryOutlined />}
             onClick={() => {
               fetchLogs();
@@ -224,6 +244,7 @@ const UserManagement: React.FC = () => {
             操作日志
           </Button>
           <Button
+            size="small"
             type="primary"
             icon={<UserAddOutlined />}
             onClick={() => {
@@ -237,7 +258,7 @@ const UserManagement: React.FC = () => {
       </div>
 
       <Card className="shadow-sm">
-        <Table dataSource={users} columns={columns as any} rowKey="id" loading={loading} scroll={{ x: 1700 }} />
+        <Table dataSource={users} columns={columns as any} rowKey="id" loading={loading} pagination={{ pageSize: 12, size: 'small' }} />
       </Card>
 
       <Modal title={editingUser ? '编辑用户' : '新增用户'} open={modalVisible} onCancel={() => setModalVisible(false)} footer={null} destroyOnHidden>
@@ -330,6 +351,7 @@ const UserManagement: React.FC = () => {
               title: '操作',
               render: (_: any, row: any) => (
                 <Button
+                  size="small"
                   disabled={!row.is_active}
                   onClick={async () => {
                     if (!sessionUser) return;

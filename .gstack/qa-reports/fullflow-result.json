@@ -1,0 +1,145 @@
+{
+  "startedAt": "2026-03-29T10:16:10.245Z",
+  "steps": [
+    {
+      "name": "admin login",
+      "ok": true,
+      "data": {
+        "url": "http://127.0.0.1:3001/login"
+      }
+    },
+    {
+      "name": "dashboard rescan",
+      "ok": true,
+      "data": {
+        "clicked": true
+      }
+    },
+    {
+      "name": "matches page",
+      "ok": false,
+      "error": "比赛列表页面未渲染"
+    },
+    {
+      "name": "calculator page",
+      "ok": true,
+      "data": {
+        "url": "http://127.0.0.1:3001/login"
+      }
+    },
+    {
+      "name": "settings save",
+      "ok": true,
+      "data": {
+        "saved": true
+      }
+    },
+    {
+      "name": "admin create user",
+      "ok": false,
+      "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: '新增用户' })\u001b[22m\n"
+    },
+    {
+      "name": "admin self-delete blocked ui",
+      "ok": false,
+      "error": "locator.isDisabled: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('tr').filter({ hasText: 'admin' }).first().getByRole('button', { name: '删除' })\u001b[22m\n"
+    },
+    {
+      "name": "logout admin",
+      "ok": true,
+      "data": {
+        "ok": true
+      }
+    },
+    {
+      "name": "user login",
+      "ok": true,
+      "data": {
+        "url": "http://127.0.0.1:3001/login"
+      }
+    },
+    {
+      "name": "user cannot access admin route",
+      "ok": true,
+      "data": {
+        "url": "http://127.0.0.1:3001/login"
+      }
+    },
+    {
+      "name": "user pages smoke",
+      "ok": true,
+      "data": {
+        "ok": true
+      }
+    }
+  ],
+  "issues": [
+    {
+      "severity": "high",
+      "title": "流程失败: matches page",
+      "detail": "比赛列表页面未渲染"
+    },
+    {
+      "severity": "medium",
+      "title": "无可点击的查看方案入口",
+      "detail": "仪表盘未找到查看方案链接"
+    },
+    {
+      "severity": "high",
+      "title": "流程失败: admin create user",
+      "detail": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: '新增用户' })\u001b[22m\n"
+    },
+    {
+      "severity": "high",
+      "title": "流程失败: admin self-delete blocked ui",
+      "detail": "locator.isDisabled: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('tr').filter({ hasText: 'admin' }).first().getByRole('button', { name: '删除' })\u001b[22m\n"
+    }
+  ],
+  "consoleErrors": [
+    {
+      "url": "http://127.0.0.1:3001/login",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "url": "http://127.0.0.1:3001/matches",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "url": "http://127.0.0.1:3001/",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "url": "http://127.0.0.1:3001/settings",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "url": "http://127.0.0.1:3001/admin/users",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "url": "http://127.0.0.1:3001/admin/users",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "url": "http://127.0.0.1:3001/login",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "url": "http://127.0.0.1:3001/admin/users",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "url": "http://127.0.0.1:3001/",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "url": "http://127.0.0.1:3001/matches",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "url": "http://127.0.0.1:3001/settings",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    }
+  ],
+  "finishedAt": "2026-03-29T10:17:22.745Z"
+}

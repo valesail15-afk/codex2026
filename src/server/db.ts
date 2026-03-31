@@ -172,6 +172,24 @@ export function initDb() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
+
+    CREATE TABLE IF NOT EXISTS scrape_health_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT DEFAULT 'external',
+      status TEXT NOT NULL, -- ok | unchanged | skipped | empty | error
+      fetched_total INTEGER DEFAULT 0,
+      filtered_total INTEGER DEFAULT 0,
+      synced_total INTEGER DEFAULT 0,
+      complete_total INTEGER DEFAULT 0,
+      hga_status TEXT DEFAULT 'unknown', -- ok | empty | failed | timeout | unknown
+      hga_count INTEGER DEFAULT 0,
+      base_count INTEGER DEFAULT 0,
+      merged_count INTEGER DEFAULT 0,
+      playwright_fallback_used INTEGER DEFAULT 0,
+      note TEXT,
+      duration_ms INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // 处理 system_settings 的迁移

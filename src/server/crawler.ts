@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 import db from './db';
 import { ArbitrageEngine } from './arbitrageEngine';
+import { createRequire } from 'module';
 
 type ExternalOdds = {
   win?: string;
@@ -88,6 +89,9 @@ const HANDICAP_TEXT_MAP: Record<string, string> = {
 const HGA_BASE_URL = 'https://hga050.com/transform_nl.php';
 const HGA_ALT_BASE_URL = 'https://hga050.com/transform.php';
 const HGA_VER = '2026-03-19-fireicon_142';
+const HGA_FETCH_TIMEOUT_MS = 25000;
+const SYNC_MIN_ROW_RATIO = 0.6;
+const PLAYWRIGHT_FALLBACK_TIMEOUT_MS = 45000;
 const TRADE500_XML_NSPF_URL = 'https://trade.500.com/static/public/jczq/newxml/pl/pl_nspf_2.xml';
 const TRADE500_XML_SPF_URL = 'https://trade.500.com/static/public/jczq/newxml/pl/pl_spf_2.xml';
 const TRADE500_ODDS_XML_HOSTS = ['https://www.500.com', 'https://trade.500.com', 'https://ews.500.com'];
@@ -143,8 +147,23 @@ type NormalizedSyncRow = {
 };
 
 const HTTP_TEXT_CACHE = new Map<string, HttpCacheEntry>();
+const require = createRequire(import.meta.url);
 
 export class CrawlerService {
+  private static lastFetchMeta: {
+    hga_status: 'ok' | 'empty' | 'failed' | 'timeout' | 'unknown';
+    hga_count: number;
+    base_count: number;
+    merged_count: number;
+    playwright_fallback_used: boolean;
+  } = {
+    hga_status: 'unknown',
+    hga_count: 0,
+    base_count: 0,
+    merged_count: 0,
+    playwright_fallback_used: false,
+  };
+
   static async mockCrawl() {
     return this.syncFromExternalScraper();
   }
@@ -154,20 +173,57 @@ export class CrawlerService {
   }
 
   static async syncFromExternalScraper() {
+    const startedAt = Date.now();
     const onlyCompleteMatches = this.shouldOnlySyncCompleteMatches();
     const rawMatches = await this.fetchExternalMatches();
     if (rawMatches.length === 0) {
       console.warn('External scraper returned 0 matches, skip overwrite and keep existing database rows');
+      this.logScrapeHealth({
+        status: 'empty',
+        fetched_total: 0,
+        filtered_total: 0,
+        synced_total: 0,
+        complete_total: 0,
+        note: 'raw empty, keep existing rows',
+        duration_ms: Date.now() - startedAt,
+      });
       return 0;
     }
     const matches = onlyCompleteMatches ? rawMatches.filter((match) => this.isMatchComplete(match)) : rawMatches;
     const existingHandicapMap = this.getExistingCrownHandicapMap();
     const incomingRows = matches.map((match) => this.toNormalizedSyncRow(match, existingHandicapMap));
     const currentRows = this.getCurrentNonManualSyncRows();
+    const currentMap = new Map(currentRows.map((row) => [row.match_id, row] as const));
+    const stabilizedRows = incomingRows.map((row) => this.stabilizeRowWithCurrent(row, currentMap.get(row.match_id)));
 
-    if (this.isSameSyncRows(currentRows, incomingRows)) {
-      console.log(`External scraper data unchanged, skip database update (${incomingRows.length} matches)`);
-      return incomingRows.length;
+    if (currentRows.length > 0 && stabilizedRows.length < Math.max(1, Math.floor(currentRows.length * SYNC_MIN_ROW_RATIO))) {
+      console.warn(
+        `External scraper row count dropped too much (${stabilizedRows.length}/${currentRows.length}), skip overwrite to avoid partial-data regression`
+      );
+      this.logScrapeHealth({
+        status: 'skipped',
+        fetched_total: rawMatches.length,
+        filtered_total: matches.length,
+        synced_total: currentRows.length,
+        complete_total: matches.filter((m) => this.isMatchComplete(m as any)).length,
+        note: 'row drop protection triggered',
+        duration_ms: Date.now() - startedAt,
+      });
+      return currentRows.length;
+    }
+
+    if (this.isSameSyncRows(currentRows, stabilizedRows)) {
+      console.log(`External scraper data unchanged, skip database update (${stabilizedRows.length} matches)`);
+      this.logScrapeHealth({
+        status: 'unchanged',
+        fetched_total: rawMatches.length,
+        filtered_total: matches.length,
+        synced_total: stabilizedRows.length,
+        complete_total: matches.filter((m) => this.isMatchComplete(m as any)).length,
+        note: 'same rows',
+        duration_ms: Date.now() - startedAt,
+      });
+      return stabilizedRows.length;
     }
 
     db.transaction(() => {
@@ -200,7 +256,7 @@ export class CrawlerService {
         VALUES (?, ?, ?, ?, ?)
       `);
 
-      for (const row of incomingRows) {
+      for (const row of stabilizedRows) {
         insertMatch.run(
           row.match_id,
           row.league,
@@ -238,10 +294,93 @@ export class CrawlerService {
     }
 
     console.log(
-      `External scraper sync completed with ${incomingRows.length} matches` +
+      `External scraper sync completed with ${stabilizedRows.length} matches` +
         (onlyCompleteMatches ? ` (filtered from ${rawMatches.length})` : '')
     );
-    return incomingRows.length;
+    this.logScrapeHealth({
+      status: 'ok',
+      fetched_total: rawMatches.length,
+      filtered_total: matches.length,
+      synced_total: stabilizedRows.length,
+      complete_total: matches.filter((m) => this.isMatchComplete(m as any)).length,
+      note: onlyCompleteMatches ? 'only_complete_matches=true' : '',
+      duration_ms: Date.now() - startedAt,
+    });
+    return stabilizedRows.length;
+  }
+
+  private static logScrapeHealth(payload: {
+    status: 'ok' | 'unchanged' | 'skipped' | 'empty' | 'error';
+    fetched_total: number;
+    filtered_total: number;
+    synced_total: number;
+    complete_total: number;
+    note?: string;
+    duration_ms: number;
+  }) {
+    const meta = this.lastFetchMeta;
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS scrape_health_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT DEFAULT 'external',
+        status TEXT NOT NULL,
+        fetched_total INTEGER DEFAULT 0,
+        filtered_total INTEGER DEFAULT 0,
+        synced_total INTEGER DEFAULT 0,
+        complete_total INTEGER DEFAULT 0,
+        hga_status TEXT DEFAULT 'unknown',
+        hga_count INTEGER DEFAULT 0,
+        base_count INTEGER DEFAULT 0,
+        merged_count INTEGER DEFAULT 0,
+        playwright_fallback_used INTEGER DEFAULT 0,
+        note TEXT,
+        duration_ms INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    ).run();
+    db.prepare(
+      `INSERT INTO scrape_health_logs
+       (source, status, fetched_total, filtered_total, synced_total, complete_total, hga_status, hga_count, base_count, merged_count, playwright_fallback_used, note, duration_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'external',
+      payload.status,
+      payload.fetched_total,
+      payload.filtered_total,
+      payload.synced_total,
+      payload.complete_total,
+      meta.hga_status,
+      meta.hga_count,
+      meta.base_count,
+      meta.merged_count,
+      meta.playwright_fallback_used ? 1 : 0,
+      payload.note || '',
+      payload.duration_ms
+    );
+  }
+
+  private static stabilizeRowWithCurrent(incoming: NormalizedSyncRow, current?: NormalizedSyncRow): NormalizedSyncRow {
+    if (!current) return incoming;
+    return {
+      ...incoming,
+      league: incoming.league || current.league,
+      round: incoming.round || current.round,
+      handicap: incoming.handicap || current.handicap,
+      jingcai_handicap: incoming.jingcai_handicap || current.jingcai_handicap,
+      home_team: incoming.home_team || current.home_team,
+      away_team: incoming.away_team || current.away_team,
+      match_time: incoming.match_time || current.match_time,
+      j_w: incoming.j_w > 0 ? incoming.j_w : current.j_w,
+      j_d: incoming.j_d > 0 ? incoming.j_d : current.j_d,
+      j_l: incoming.j_l > 0 ? incoming.j_l : current.j_l,
+      j_hw: incoming.j_hw > 0 ? incoming.j_hw : current.j_hw,
+      j_hd: incoming.j_hd > 0 ? incoming.j_hd : current.j_hd,
+      j_hl: incoming.j_hl > 0 ? incoming.j_hl : current.j_hl,
+      c_w: incoming.c_w > 0 ? incoming.c_w : current.c_w,
+      c_d: incoming.c_d > 0 ? incoming.c_d : current.c_d,
+      c_l: incoming.c_l > 0 ? incoming.c_l : current.c_l,
+      c_h: (incoming.c_h || []).length > 0 ? incoming.c_h : current.c_h,
+    };
   }
 
   private static getExistingCrownHandicapMap() {
@@ -357,47 +496,150 @@ export class CrawlerService {
   }
 
   private static async fetchExternalMatches(): Promise<ExternalMatch[]> {
+    this.lastFetchMeta = {
+      hga_status: 'unknown',
+      hga_count: 0,
+      base_count: 0,
+      merged_count: 0,
+      playwright_fallback_used: false,
+    };
     const strictByHgaHandicapCount = (rows: ExternalMatch[]) =>
       rows.filter((match) => this.getValidCrownHandicaps(this.buildHandicaps(match)).length >= REQUIRED_CROWN_HANDICAP_COUNT);
 
     let baseMatches: ExternalMatch[] = [];
     try {
       baseMatches = await this.fetchTrade500AsPrimaryMatches();
+      this.lastFetchMeta.base_count = baseMatches.length;
     } catch (err: any) {
       console.warn(`Trade500 primary source failed: ${err?.message || err}`);
+      this.lastFetchMeta.hga_status = 'failed';
       return [];
     }
 
     try {
-      const hgaMatches = await this.fetchHgaMatches();
+      const hgaMatches = await this.withTimeout(this.fetchHgaMatches(), HGA_FETCH_TIMEOUT_MS, 'HGA fetch timeout');
+      this.lastFetchMeta.hga_count = hgaMatches.length;
       if (hgaMatches.length === 0) {
+        this.lastFetchMeta.hga_status = 'empty';
         console.warn('HGA returned 0 matches, fallback to Trade500 primary source');
+        const withPw = await this.tryPlaywrightFallback(baseMatches, 'hga-empty');
+        if (withPw.length > 0) baseMatches = withPw;
         const strictBase = strictByHgaHandicapCount(baseMatches);
-        if (strictBase.length > 0) {
-          console.warn(`Trade500 strict fallback kept ${strictBase.length}/${baseMatches.length} matches`);
-          return strictBase;
-        }
+        console.warn(`Trade500 strict fallback reference: ${strictBase.length}/${baseMatches.length} matches`);
         return baseMatches;
       }
       const merged = this.mergeHgaCrownData(baseMatches, hgaMatches);
+      this.lastFetchMeta.hga_status = 'ok';
+      this.lastFetchMeta.merged_count = merged.length;
       const strict = strictByHgaHandicapCount(merged);
       console.log(
         `HGA strict filter kept ${strict.length}/${merged.length} matches (requires ${REQUIRED_CROWN_HANDICAP_COUNT} crown handicaps)`
       );
-      if (strict.length > 0) {
-        return strict;
+      // Strict set is informational only. Do not shrink result set, or match list may collapse to 1-2 rows.
+      if (strict.length === 0) {
+        console.warn('HGA strict filter produced 0 matches, fallback to merged results without strict filter');
       }
-      console.warn('HGA strict filter produced 0 matches, fallback to merged results without strict filter');
       return merged;
     } catch (err: any) {
+      this.lastFetchMeta.hga_status = String(err?.message || '').includes('timeout') ? 'timeout' : 'failed';
       console.warn(`HGA source failed, fallback to Trade500 primary source: ${err?.message || err}`);
+      const withPw = await this.tryPlaywrightFallback(baseMatches, 'hga-failed');
+      if (withPw.length > 0) baseMatches = withPw;
       const strictBase = strictByHgaHandicapCount(baseMatches);
-      if (strictBase.length > 0) {
-        console.warn(`Trade500 strict fallback kept ${strictBase.length}/${baseMatches.length} matches`);
-        return strictBase;
-      }
+      console.warn(`Trade500 strict fallback reference: ${strictBase.length}/${baseMatches.length} matches`);
       return baseMatches;
     }
+  }
+
+  private static async tryPlaywrightFallback(baseMatches: ExternalMatch[], reason: string): Promise<ExternalMatch[]> {
+    try {
+      const force = process.env.FORCE_PLAYWRIGHT_FALLBACK === 'true';
+      if (!force && baseMatches.length > 0) {
+        // Only trigger Playwright fallback when HGA degraded and base rows may be incomplete.
+        const completeCount = baseMatches.filter((m) => this.isMatchComplete(m)).length;
+        if (completeCount >= Math.max(1, Math.floor(baseMatches.length * 0.7))) {
+          return baseMatches;
+        }
+      }
+
+      const pwRows = await this.withTimeout(this.fetchPlaywrightMatches(), PLAYWRIGHT_FALLBACK_TIMEOUT_MS, 'Playwright fallback timeout');
+      if (!Array.isArray(pwRows) || pwRows.length === 0) return baseMatches;
+      const merged = this.mergePlaywrightData(baseMatches, pwRows);
+      this.lastFetchMeta.playwright_fallback_used = true;
+      this.lastFetchMeta.merged_count = merged.length;
+      console.log(`Playwright fallback merged ${merged.length} matches (reason=${reason}, source=${pwRows.length})`);
+      return merged;
+    } catch (err: any) {
+      console.warn(`Playwright fallback skipped: ${err?.message || err}`);
+      return baseMatches;
+    }
+  }
+
+  private static async fetchPlaywrightMatches(): Promise<ExternalMatch[]> {
+    const mod = require('./scraper/playwright-scraper-full.cjs');
+    const scrape = mod?.scrapeFullMatchData;
+    if (typeof scrape !== 'function') return [];
+    const rows = await scrape(null);
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  private static mergePlaywrightData(baseMatches: ExternalMatch[], pwMatches: ExternalMatch[]): ExternalMatch[] {
+    if (baseMatches.length === 0 || pwMatches.length === 0) return baseMatches;
+    const byPair = new Map<string, ExternalMatch[]>();
+    for (const row of pwMatches) {
+      const key = `${this.normalizeNameForMatch(row.homeTeam)}|${this.normalizeNameForMatch(row.awayTeam)}`;
+      if (!byPair.has(key)) byPair.set(key, []);
+      byPair.get(key)!.push(row);
+    }
+
+    const isValidTriplet = (odds?: ExternalOdds) =>
+      this.parseOdds(odds?.win) > 0 && this.parseOdds(odds?.draw) > 0 && this.parseOdds(odds?.lose) > 0;
+
+    let enriched = 0;
+    return baseMatches.map((base) => {
+      const key = `${this.normalizeNameForMatch(base.homeTeam)}|${this.normalizeNameForMatch(base.awayTeam)}`;
+      const candidates = byPair.get(key) || [];
+      if (candidates.length === 0) return base;
+      const chosen =
+        candidates.find((x) => this.normalizeMatchTime(x.matchTime).slice(0, 16) === this.normalizeMatchTime(base.matchTime).slice(0, 16)) ||
+        candidates.find((x) => this.normalizeMatchTime(x.matchTime).slice(0, 10) === this.normalizeMatchTime(base.matchTime).slice(0, 10)) ||
+        candidates[0];
+      if (!chosen) return base;
+
+      const merged: ExternalMatch = {
+        ...base,
+        crownOdds: isValidTriplet(base.crownOdds) ? base.crownOdds : chosen.crownOdds || base.crownOdds,
+        crownAsia:
+          (this.parseOdds(base.crownAsia?.homeWater) > 0 && this.parseOdds(base.crownAsia?.awayWater) > 0)
+            ? base.crownAsia
+            : chosen.crownAsia || base.crownAsia,
+      };
+      const baseOddsValid = isValidTriplet(base.crownOdds);
+      const mergedOddsValid = isValidTriplet(merged.crownOdds);
+      const baseHandicapCount = this.buildHandicaps(base).length;
+      const mergedHandicaps = this.mergeHandicapCandidates(this.buildHandicaps(merged), this.buildHandicaps(chosen));
+      if (mergedHandicaps.length > baseHandicapCount) {
+        merged.crownHandicaps = mergedHandicaps;
+      }
+      if ((!baseOddsValid && mergedOddsValid) || mergedHandicaps.length > baseHandicapCount) enriched += 1;
+      return merged;
+    });
+  }
+
+  private static withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), ms);
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
   }
 
   private static async fetchTrade500AsPrimaryMatches(): Promise<ExternalMatch[]> {

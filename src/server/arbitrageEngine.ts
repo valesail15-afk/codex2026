@@ -18,6 +18,24 @@ export class ArbitrageEngine {
     return Number.isFinite(v) && v > min;
   }
 
+  static hasAllPositiveParlayCombos(strategy: any, min = 0.01) {
+    const combos = strategy?.parlay_combo_details;
+    if (!Array.isArray(combos) || combos.length < 9) return false;
+    return combos.every((x: any) => {
+      const total = Number(x?.total);
+      return Number.isFinite(total) && total > min;
+    });
+  }
+
+  static hasAllPositiveSingleTotalProfits(strategy: any, min = 0.01) {
+    const p = strategy?.profits;
+    if (!p) return false;
+    const win = Number(p.win);
+    const draw = Number(p.draw);
+    const lose = Number(p.lose);
+    return Number.isFinite(win) && Number.isFinite(draw) && Number.isFinite(lose) && win > min && draw > min && lose > min;
+  }
+
   static parseHandicap(h: string): number {
     if (!h) return 0;
     const s = String(h).replace(/\s+/g, '');
@@ -398,6 +416,8 @@ export class ArbitrageEngine {
         integerUnit
       );
       if (!s) continue;
+      // Single arbitrage recommendation is based on total profit (including rebates).
+      if (!this.hasAllPositiveSingleTotalProfits(s, 0.01)) continue;
       if (!(s.profits.win > 0 && s.profits.draw > 0 && s.profits.lose > 0)) continue;
       s.name = `${m.label} ${s.name}`;
       s.jc_market = m.market;
@@ -739,6 +759,8 @@ export class ArbitrageEngine {
               baseType
             );
             if (!strategy || strategy.min_profit_rate <= 0) continue;
+            // Parlay recommendations must guarantee all 9 combo totals (including rebates) are positive.
+            if (!this.hasAllPositiveParlayCombos(strategy, 0.01)) continue;
             list.push({
               match_id_1: m1.match_id,
               match_id_2: m2.match_id,
@@ -758,3 +780,4 @@ export class ArbitrageEngine {
     return list.sort((a, b) => b.profit_rate - a.profit_rate).slice(0, 30);
   }
 }
+

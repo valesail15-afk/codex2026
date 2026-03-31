@@ -3,7 +3,8 @@ import { Alert, App, Button, Card, Col, Empty, Form, Radio, Row, Space, Table, T
 import { InfoCircleOutlined } from '@ant-design/icons';
 import { useParams, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
-import { HedgeStrategy } from '../types';
+import type { HedgeStrategy } from '../types';
+import { invertHandicap, normalizeCrownTarget, parseCrownBetType, parseHandicap } from '../shared/oddsText';
 
 const { Title, Text } = Typography;
 
@@ -12,56 +13,47 @@ type Market = 'normal' | 'handicap';
 type BaseType = 'jingcai' | 'crown';
 
 const currency = (n: number) => `¥${Number(n || 0).toFixed(2)}`;
+const signedCurrency = (n: number) => `${Number(n || 0) >= 0 ? '+' : '-'}¥${Math.abs(Number(n || 0)).toFixed(2)}`;
 const rateHot = (r: number) => Number(r || 0) >= 0.005;
 
-const invertHandicap = (line: string) => {
-  const s = String(line || '0').trim();
-  if (!s) return '0';
-  if (s.startsWith('+')) return `-${s.slice(1)}`;
-  if (s.startsWith('-')) return `+${s.slice(1)}`;
-  return `-${s}`;
-};
-
-const parseHandicap = (h: string): number => {
-  const s = String(h || '').replace(/\s+/g, '');
-  if (!s) return 0;
-  if (!s.includes('/')) {
-    const n = Number(s);
-    return Number.isFinite(n) ? n : 0;
+const formatJcSideLabel = (side: Side, market: Market, line: string) => {
+  if (market === 'normal') {
+    if (side === 'W') return '主胜';
+    if (side === 'D') return '平';
+    return '客胜';
   }
-  const parts = s.split('/');
-  const firstSign = parts[0].startsWith('-') ? '-' : parts[0].startsWith('+') ? '+' : '';
-  const vals = parts
-    .map((p, idx) => {
-      if (idx === 0) return Number(p);
-      if (p.startsWith('+') || p.startsWith('-')) return Number(p);
-      if (firstSign) return Number(`${firstSign}${p}`);
-      return Number(p);
-    })
-    .filter((x) => Number.isFinite(x));
-  if (!vals.length) return 0;
-  return vals.reduce((a, b) => a + b, 0) / vals.length;
+  if (side === 'W') return `主胜(${line})`;
+  if (side === 'D') return `平(${line})`;
+  return `客胜(${invertHandicap(line)})`;
 };
 
-const normalizeCrownTarget = (raw: string) => {
-  const t = String(raw || '').trim();
-  if (!t) return t;
-  if (t.includes('标准胜')) return '主胜';
-  if (t.includes('标准平')) return '平';
-  if (t.includes('标准负')) return '客胜';
-  return t;
-};
+const getCrownGrossReturn = (type: string, odds: number, amount: number, dg: number): number => {
+  const o = Number(odds || 0);
+  const a = Number(amount || 0);
+  if (a <= 0 || o <= 0) return 0;
 
-const getPushRefundRatio = (type: string, dg: number) => {
-  const t = String(type || '').trim();
-  if (t.includes('标准胜') || t.includes('标准平') || t.includes('标准负')) return 0;
-  const m = t.match(/^(主胜|客胜)\(([^)]+)\)$/);
-  if (!m) return 0;
-  const isHome = m[1] === '主胜';
-  const handicap = parseHandicap(m[2]);
-  const score = isHome ? dg + handicap : -dg + handicap;
-  if (score === 0) return 1;
-  if (score === 0.25 || score === -0.25) return 0.5;
+  const bet = parseCrownBetType(type);
+  const side: Side = bet.side === 'home' ? 'W' : bet.side === 'draw' ? 'D' : 'L';
+
+  if (bet.kind === 'std') {
+    const hit = side === 'W' ? dg > 0 : side === 'D' ? dg === 0 : dg < 0;
+    return hit ? a * o : 0;
+  }
+
+  if (side === 'D') {
+    const score = Number(bet.handicap || 0) - Math.abs(dg);
+    if (score >= 0.5) return a * (1 + o);
+    if (score === 0.25) return a * (1 + o / 2);
+    if (score === 0) return a;
+    if (score === -0.25) return a * 0.5;
+    return 0;
+  }
+
+  const score = side === 'W' ? dg + Number(bet.handicap || 0) : -dg + Number(bet.handicap || 0);
+  if (score >= 0.5) return a * (1 + o);
+  if (score === 0.25) return a * (1 + o / 2);
+  if (score === 0) return a;
+  if (score === -0.25) return a * 0.5;
   return 0;
 };
 
@@ -84,20 +76,19 @@ const Calculator: React.FC = () => {
   const jcOptions = useMemo(() => {
     if (!matchInfo) return [];
     const line = String(matchInfo.jc_handicap || matchInfo.j_h || '0').trim() || '0';
-    const awayLine = invertHandicap(line);
-    const list: Array<{ value: string; label: string; side: Side; market: Market; odds: number }> = [
-      { value: 'normal_W', label: `主胜 (${matchInfo.j_w || '-'})`, side: 'W', market: 'normal', odds: Number(matchInfo.j_w || 0) },
-      { value: 'normal_D', label: `平 (${matchInfo.j_d || '-'})`, side: 'D', market: 'normal', odds: Number(matchInfo.j_d || 0) },
-      { value: 'normal_L', label: `客胜 (${matchInfo.j_l || '-'})`, side: 'L', market: 'normal', odds: Number(matchInfo.j_l || 0) },
+    const list: Array<{ value: string; label: string; betLabel: string; side: Side; market: Market; odds: number }> = [
+      { value: 'normal_W', label: `${formatJcSideLabel('W', 'normal', line)} ${matchInfo.j_w || '-'}`, betLabel: formatJcSideLabel('W', 'normal', line), side: 'W', market: 'normal', odds: Number(matchInfo.j_w || 0) },
+      { value: 'normal_D', label: `${formatJcSideLabel('D', 'normal', line)} ${matchInfo.j_d || '-'}`, betLabel: formatJcSideLabel('D', 'normal', line), side: 'D', market: 'normal', odds: Number(matchInfo.j_d || 0) },
+      { value: 'normal_L', label: `${formatJcSideLabel('L', 'normal', line)} ${matchInfo.j_l || '-'}`, betLabel: formatJcSideLabel('L', 'normal', line), side: 'L', market: 'normal', odds: Number(matchInfo.j_l || 0) },
     ];
-    if (Number(matchInfo.j_hw || 0) > 1) list.push({ value: 'handicap_W', label: `${line}主胜 (${matchInfo.j_hw})`, side: 'W', market: 'handicap', odds: Number(matchInfo.j_hw || 0) });
-    if (Number(matchInfo.j_hd || 0) > 1) list.push({ value: 'handicap_D', label: `${line}平 (${matchInfo.j_hd})`, side: 'D', market: 'handicap', odds: Number(matchInfo.j_hd || 0) });
-    if (Number(matchInfo.j_hl || 0) > 1) list.push({ value: 'handicap_L', label: `${awayLine}客胜 (${matchInfo.j_hl})`, side: 'L', market: 'handicap', odds: Number(matchInfo.j_hl || 0) });
+    if (Number(matchInfo.j_hw || 0) > 1) list.push({ value: 'handicap_W', label: `${formatJcSideLabel('W', 'handicap', line)} ${matchInfo.j_hw}`, betLabel: formatJcSideLabel('W', 'handicap', line), side: 'W', market: 'handicap', odds: Number(matchInfo.j_hw || 0) });
+    if (Number(matchInfo.j_hd || 0) > 1) list.push({ value: 'handicap_D', label: `${formatJcSideLabel('D', 'handicap', line)} ${matchInfo.j_hd}`, betLabel: formatJcSideLabel('D', 'handicap', line), side: 'D', market: 'handicap', odds: Number(matchInfo.j_hd || 0) });
+    if (Number(matchInfo.j_hl || 0) > 1) list.push({ value: 'handicap_L', label: `${formatJcSideLabel('L', 'handicap', line)} ${matchInfo.j_hl}`, betLabel: formatJcSideLabel('L', 'handicap', line), side: 'L', market: 'handicap', odds: Number(matchInfo.j_hl || 0) });
     return list;
   }, [matchInfo]);
 
   const calculateSingle = async (pick: string, baseType: BaseType, integerUnit: number) => {
-    if (!matchId || !pick) return [];
+    if (!matchId || !pick) return [] as HedgeStrategy[];
     const [market, side] = String(pick).split('_') as [Market, Side];
     const res = await axios.post('/api/arbitrage/calculate', {
       match_id: matchId,
@@ -107,7 +98,9 @@ const Calculator: React.FC = () => {
       base_type: baseType,
       integer_unit: integerUnit,
     });
-    const list = (res.data || []).filter((s: HedgeStrategy) => s?.profits?.win > 0 && s?.profits?.draw > 0 && s?.profits?.lose > 0);
+    const list = (Array.isArray(res.data) ? res.data : []).filter((s: HedgeStrategy) => {
+      return Number(s?.profits?.win || 0) > 0.01 && Number(s?.profits?.draw || 0) > 0.01 && Number(s?.profits?.lose || 0) > 0.01;
+    });
     list.sort((a: HedgeStrategy, b: HedgeStrategy) => (b.min_profit_rate || 0) - (a.min_profit_rate || 0));
     return list;
   };
@@ -126,6 +119,7 @@ const Calculator: React.FC = () => {
           }
         })
       );
+
       const meta = Object.fromEntries(entries);
       setOptionMeta(meta);
 
@@ -178,14 +172,17 @@ const Calculator: React.FC = () => {
   ) => {
     const baseType = (all.base_type || initialBaseType) as BaseType;
     const integerUnit = Number(all.integer_unit || initialUnit);
+
     if (changed.base_type !== undefined || changed.integer_unit !== undefined) {
       await refreshAllOptions(baseType, integerUnit);
       return;
     }
+
     if (!all.jc_pick) {
       await refreshAllOptions(baseType, integerUnit);
       return;
     }
+
     const list = await calculateSingle(all.jc_pick, baseType, integerUnit);
     setStrategies(list);
     setSelected(list[0] || null);
@@ -193,12 +190,12 @@ const Calculator: React.FC = () => {
 
   const selectedPick = Form.useWatch('jc_pick', form);
 
-  const jcAmount = (s: HedgeStrategy) => {
+  const getJcAmount = (s: HedgeStrategy) => {
     const crown = (s.crown_bets || []).reduce((sum, b) => sum + Number(b.amount || 0), 0);
     return Math.max(0, Number(s.user_invest || 0) - crown);
   };
 
-  const currentJcOdds = (s: HedgeStrategy) => {
+  const getCurrentJcOdds = (s: HedgeStrategy) => {
     const picked = jcOptions.find((x) => x.value === selectedPick);
     if (picked && picked.odds > 0) return picked.odds;
     return Number(s.jc_odds || 0);
@@ -206,45 +203,108 @@ const Calculator: React.FC = () => {
 
   const betRows = useMemo(() => {
     if (!selected) return [];
-    const jcAmt = jcAmount(selected);
+    const jcAmt = getJcAmount(selected);
     return [
       {
         key: 'jc',
         platform: '竞彩',
-        target: jcOptions.find((x) => x.value === selectedPick)?.label?.replace(/\s*\([\d.]+\)\s*$/, '') || '竞彩',
+        target: jcOptions.find((x) => x.value === selectedPick)?.betLabel || '竞彩',
+        odds: getCurrentJcOdds(selected),
         amount: jcAmt,
         share: settingsShare.jc,
         realAmount: jcAmt / Math.max(1 - settingsShare.jc, 0.0001),
-        odds: currentJcOdds(selected),
       },
-      ...(selected.crown_bets || []).map((b, i) => {
+      ...((selected.crown_bets || []).map((b, i) => {
         const amt = Number(b.amount || 0);
         return {
           key: `c_${i}`,
           platform: '皇冠',
-          target: normalizeCrownTarget(b.type),
+          target: normalizeCrownTarget(String(b.type || '')),
+          odds: Number(b.odds || 0),
           amount: amt,
           share: settingsShare.crown,
           realAmount: amt / Math.max(1 - settingsShare.crown, 0.0001),
-          odds: Number(b.odds || 0),
         };
-      }),
+      }) as any[]),
     ];
   }, [selected, settingsShare, selectedPick, jcOptions]);
 
   const realInvestTotal = useMemo(() => betRows.reduce((sum, row: any) => sum + Number(row.realAmount || 0), 0), [betRows]);
 
   const outcomeRows = useMemo(() => {
-    if (!selected) return [];
+    if (!selected) return [] as any[];
+
+    const picked = jcOptions.find((x) => x.value === selectedPick);
+    const jcSide = (picked?.side || selected.jcSide || 'W') as Side;
+    const jcMarket = (picked?.market || selected.jc_market || 'normal') as Market;
+    const jcLine = String(matchInfo?.jc_handicap || matchInfo?.j_h || '0');
+    const jcOdds = getCurrentJcOdds(selected);
     const crownBets = selected.crown_bets || [];
-    const calcPushRefund = (dg: number) =>
-      crownBets.reduce((sum, b) => sum + Number(b.amount || 0) * getPushRefundRatio(String(b.type || ''), dg), 0);
+    const invest = Number(selected.user_invest || 0);
+
+    const jcHit = (dg: number) => {
+      if (jcMarket === 'normal') return jcSide === 'W' ? dg > 0 : jcSide === 'D' ? dg === 0 : dg < 0;
+      const adjusted = dg + parseHandicap(jcLine);
+      const outcome: Side = adjusted > 0 ? 'W' : adjusted < 0 ? 'L' : 'D';
+      return outcome === jcSide;
+    };
+
+    const buildRow = (key: 'win' | 'draw' | 'lose', dg: number, title: string, color: string) => {
+      const jcStake = Number(getJcAmount(selected) || 0);
+      const jcReturn = jcHit(dg) ? jcStake * Number(jcOdds || 0) : 0;
+
+      const crownDetails = crownBets.map((b, idx) => {
+        const amount = Number(b.amount || 0);
+        const odds = Number(b.odds || 0);
+        const ret = getCrownGrossReturn(String(b.type || ''), odds, amount, dg);
+        return {
+          key: `c_${idx}`,
+          text: `皇冠：${normalizeCrownTarget(String(b.type || ''))}`,
+          hit: ret > 0,
+          amount: ret,
+        };
+      });
+
+      const crownReturn = crownDetails.reduce((sum, x) => sum + Number(x.amount || 0), 0);
+      const matchByDetails = jcReturn + crownReturn - invest;
+      const rebateByKey =
+        key === 'win' ? Number(selected.rebates?.win || 0) : key === 'draw' ? Number(selected.rebates?.draw || 0) : Number(selected.rebates?.lose || 0);
+      const matchByStrategy =
+        key === 'win'
+          ? Number(selected.match_profits?.win || 0)
+          : key === 'draw'
+          ? Number(selected.match_profits?.draw || 0)
+          : Number(selected.match_profits?.lose || 0);
+      const totalByStrategy =
+        key === 'win' ? Number(selected.profits?.win || 0) : key === 'draw' ? Number(selected.profits?.draw || 0) : Number(selected.profits?.lose || 0);
+
+      const details = [
+        {
+          key: 'jc',
+          text: `竞彩：${picked?.betLabel || '竞彩'}`,
+          hit: jcReturn > 0,
+          amount: jcReturn,
+        },
+        ...crownDetails,
+      ];
+
+      return {
+        key,
+        title,
+        color,
+        details,
+        match: Number.isFinite(matchByStrategy) ? matchByStrategy : matchByDetails,
+        rebate: Number.isFinite(rebateByKey) ? rebateByKey : Number(selected.rebate || 0),
+        total: Number.isFinite(totalByStrategy) ? totalByStrategy : matchByDetails + rebateByKey,
+      };
+    };
+
     return [
-      { key: 'win', title: '主队胜', profit: selected.profits.win, match: selected.match_profits.win, rebate: selected.rebates.win, pushRefund: calcPushRefund(1), tagColor: 'blue' },
-      { key: 'draw', title: '平局', profit: selected.profits.draw, match: selected.match_profits.draw, rebate: selected.rebates.draw, pushRefund: calcPushRefund(0), tagColor: 'gold' },
-      { key: 'lose', title: '客队胜', profit: selected.profits.lose, match: selected.match_profits.lose, rebate: selected.rebates.lose, pushRefund: calcPushRefund(-1), tagColor: 'red' },
+      buildRow('win', 1, '主胜', 'blue'),
+      buildRow('draw', 0, '平', 'gold'),
+      buildRow('lose', -1, '客胜', 'red'),
     ];
-  }, [selected]);
+  }, [selected, jcOptions, selectedPick, matchInfo]);
 
   const title = matchInfo ? `（单场）${matchInfo.home_team} vs ${matchInfo.away_team}` : '单场下注方案';
 
@@ -253,11 +313,12 @@ const Calculator: React.FC = () => {
       <Title level={2} style={{ marginBottom: 16 }}>
         {title}
       </Title>
+
       <Row gutter={20}>
         <Col xs={24} lg={8}>
           <Card title="下注设置" style={{ marginBottom: 16 }} loading={loading}>
             <Form form={form} layout="vertical" onValuesChange={handleValuesChange}>
-              <Form.Item name="jc_pick" label="竞彩">
+              <Form.Item name="jc_pick" label="竞彩选项">
                 <Radio.Group className="solid-blue-radio" style={{ width: '100%', display: 'grid', gap: 8 }}>
                   {jcOptions.map((opt) => {
                     const disabled = optionMeta[opt.value]?.hasPlan === false;
@@ -274,6 +335,7 @@ const Calculator: React.FC = () => {
                   })}
                 </Radio.Group>
               </Form.Item>
+
               <Form.Item name="base_type" label="整数控制">
                 <Radio.Group className="solid-blue-radio" style={{ width: '100%' }}>
                   <Radio.Button value="jingcai" style={{ width: '50%', textAlign: 'center' }}>
@@ -284,16 +346,17 @@ const Calculator: React.FC = () => {
                   </Radio.Button>
                 </Radio.Group>
               </Form.Item>
-              <Form.Item name="integer_unit" label="选择倍数">
+
+              <Form.Item name="integer_unit" label="投注单位">
                 <Radio.Group className="solid-blue-radio" style={{ width: '100%' }}>
                   <Radio.Button value={1000} style={{ width: '33.33%', textAlign: 'center' }}>
-                    一千
+                    1000
                   </Radio.Button>
                   <Radio.Button value={10000} style={{ width: '33.33%', textAlign: 'center' }}>
-                    一万
+                    10000
                   </Radio.Button>
                   <Radio.Button value={100000} style={{ width: '33.33%', textAlign: 'center' }}>
-                    十万
+                    100000
                   </Radio.Button>
                 </Radio.Group>
               </Form.Item>
@@ -301,10 +364,10 @@ const Calculator: React.FC = () => {
           </Card>
 
           <Card title="对冲策略选择">
-                  <Space orientation="vertical" style={{ width: '100%' }}>
+            <Space direction="vertical" style={{ width: '100%' }}>
               {(strategies || []).map((s, idx) => (
                 <Button key={`${s.name}_${idx}`} className="solid-blue-btn" block type={selected?.name === s.name ? 'primary' : 'default'} onClick={() => setSelected(s)}>
-                  {s.name} ({((s.min_profit_rate || 0) * 100).toFixed(2)}%)
+                  方案{idx + 1} ({((s.min_profit_rate || 0) * 100).toFixed(2)}%)
                 </Button>
               ))}
             </Space>
@@ -314,7 +377,7 @@ const Calculator: React.FC = () => {
         <Col xs={24} lg={16}>
           {!selected ? (
             <Card>
-              <Empty description="暂无可用的保底盈利方案" />
+              <Empty description="暂无可用的单场方案" />
             </Card>
           ) : (
             <Card title="下注方案详情">
@@ -324,16 +387,16 @@ const Calculator: React.FC = () => {
                 size="small"
                 rowKey="key"
                 columns={[
-                  { title: '平台', dataIndex: 'platform', width: '20%' as any },
-                  { title: '下注项', dataIndex: 'target', width: '20%' as any },
-                  { title: '赔率', dataIndex: 'odds', width: '20%' as any, render: (v: number) => Number(v || 0).toFixed(2) },
-                  { title: '占比', dataIndex: 'share', width: '20%' as any, render: (v: number) => `${(Number(v || 0) * 100).toFixed(1)}%` },
+                  { title: '平台', dataIndex: 'platform', width: '20%' as const },
+                  { title: '下注项', dataIndex: 'target', width: '20%' as const },
+                  { title: '赔率', dataIndex: 'odds', width: '20%' as const, render: (v: number) => Number(v || 0).toFixed(2) },
+                  { title: '占比', dataIndex: 'share', width: '20%' as const, render: (v: number) => `${(Number(v || 0) * 100).toFixed(1)}%` },
                   {
                     title: '下注金额',
                     dataIndex: 'amount',
-                    width: '20%' as any,
+                    width: '20%' as const,
                     render: (v: number, row: any) => (
-                    <Space orientation="vertical" size={0}>
+                      <Space direction="vertical" size={0}>
                         <Text strong>{currency(v)}</Text>
                         <Text style={{ color: Number(row.share || 0) > 0 ? '#1677ff' : '#999' }}>实投: {currency(row.realAmount)}</Text>
                       </Space>
@@ -345,35 +408,40 @@ const Calculator: React.FC = () => {
 
               <div style={{ marginTop: 20 }}>
                 <Title level={3} style={{ marginBottom: 8 }}>
-                  预期收益分析 <Text type="secondary" style={{ fontSize: 14 }}>（显示各结果下的最低保证利润）</Text>
+                  预期收益分析 <Text type="secondary" style={{ fontSize: 14 }}>（展示主胜/平/客胜三种结果）</Text>
                 </Title>
                 <Row gutter={12}>
                   {outcomeRows.map((r) => (
-                    <Col span={8} key={r.key} style={{ display: 'flex' }}>
+                    <Col xs={24} md={12} lg={8} key={r.key} style={{ display: 'flex' }}>
                       <Card size="small" style={{ borderColor: '#b7eb8f', background: '#f6ffed', width: '100%', height: '100%' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                           <div style={{ textAlign: 'center', marginBottom: 8 }}>
-                            <Tag color={r.tagColor}>{r.title}</Tag>
-                          </div>
-                          <div style={{ textAlign: 'center', fontSize: 30, color: '#52c41a', fontWeight: 700 }}>
-                            {currency(Number(realInvestTotal || 0) + Number(r.profit || 0))}
+                            <Tag color={r.color}>{r.title}</Tag>
                           </div>
                           <div style={{ borderTop: '1px solid #e8e8e8', margin: '10px 0' }} />
+
+                          {(r.details || []).map((d: any, idx: number) => (
+                            <div key={`${r.key}_${idx}`} style={{ marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                              <Text style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.text}</Text>
+                              <Text style={{ fontSize: 12, color: Number(d.amount || 0) >= 0 ? '#389e0d' : '#cf1322', flexShrink: 0 }}>
+                                {d.hit ? '中' : '不中'} {signedCurrency(d.amount)}
+                              </Text>
+                            </div>
+                          ))}
+
+                          {(r.details || []).length > 0 ? <div style={{ borderTop: '1px dashed #d9d9d9', margin: '8px 0' }} /> : null}
+
                           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                             <Text>胜负收益:</Text>
-                            <Text style={{ color: r.match >= 0 ? '#389e0d' : '#cf1322' }}>{currency(r.match)}</Text>
+                            <Text style={{ color: Number(r.match || 0) >= 0 ? '#389e0d' : '#cf1322' }}>{signedCurrency(r.match)}</Text>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                             <Text>返水收益:</Text>
-                            <Text style={{ color: '#389e0d' }}>{currency(r.rebate)}</Text>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', visibility: Number(r.pushRefund || 0) > 0.01 ? 'visible' : 'hidden' }}>
-                            <Text>走水退回:</Text>
-                            <Text style={{ color: '#389e0d' }}>{currency(r.pushRefund)}</Text>
+                            <Text style={{ color: '#389e0d' }}>{signedCurrency(r.rebate)}</Text>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 'auto' }}>
                             <Text strong>总利润:</Text>
-                            <Text strong style={{ color: '#389e0d' }}>{currency(r.profit)}</Text>
+                            <Text strong style={{ color: Number(r.total || 0) >= 0 ? '#389e0d' : '#cf1322' }}>{signedCurrency(r.total)}</Text>
                           </div>
                         </div>
                       </Card>
@@ -397,14 +465,8 @@ const Calculator: React.FC = () => {
                 type="info"
                 showIcon
                 icon={<InfoCircleOutlined />}
-                message="结算规则说明"
-                description={
-                  <div>
-                    <div>走水规则：0、1、2 等整数盘口支持全额退款（走水），走水部分不计算返水。</div>
-                    <div>复合盘口：如 0/0.5、0.5/1 等，按 50% 拆分结算，可能出现赢一半或输一半。</div>
-                    <div>保守计算：分析结果按最差比分路径计算，确保任一结果下都是保底利润。</div>
-                  </div>
-                }
+                message="算法说明"
+                description="单场卡片的总利润、最低利润率与后端引擎保持同口径；卡片中的每条下注展示的是该结果下的实际返还额（中为返还，不中为0）。"
               />
             </Card>
           )}

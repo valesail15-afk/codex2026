@@ -1,5 +1,5 @@
 /**
- * 足球套利系统 - 类型定义
+ * ?????? - ????
  */
 
 export interface Match {
@@ -31,7 +31,7 @@ export interface JingcaiOdds {
 }
 
 export interface Handicap {
-  type: string; // 例如 "+0.00", "-0.5"
+  type: string; // ?? "+0.00", "-0.5"
   home_odds: number;
   away_odds: number;
 }
@@ -97,6 +97,16 @@ export interface HedgeStrategy {
       lose: number;
     };
   };
+  parlay_combo_details?: Array<{
+    key: string;
+    first: 'W' | 'D' | 'L';
+    second: 'W' | 'D' | 'L';
+    first_label: string;
+    second_label: string;
+    total: number;
+    match: number;
+    rebate: number;
+  }>;
 }
 
 export interface CrownBet {

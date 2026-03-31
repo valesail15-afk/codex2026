@@ -85,12 +85,25 @@ const renderOutcomeTag = (label: string, odds: number | undefined, color: 'win' 
   return <Tag color={oddsColorByResult[color]}>{`${label} @ ${v}`}</Tag>;
 };
 
-const renderJcOutcomeCell = (label: string, color: 'win' | 'draw' | 'lose', normal?: number, handicap?: number) => (
-  <Space orientation="vertical" size={4}>
-    {renderOutcomeTag(label, normal, color)}
-    {formatOdds(handicap) !== '-' ? (
-      <Tag color={oddsColorByResult[color]} variant="filled" style={{ opacity: 0.65 }}>
-        {`让球 ${label} @ ${formatOdds(handicap)}`}
+const handicapLabelByOutcome = (outcome: 'win' | 'draw' | 'lose', jcHandicap?: string) => {
+  const line = formatHandicapType(jcHandicap || '0');
+  if (outcome === 'win') return `主胜(${line})`;
+  if (outcome === 'draw') return `平(${line})`;
+  return `客胜(${oppositeHandicapType(line)})`;
+};
+
+const renderJcOutcomeCell = (
+  outcome: 'win' | 'draw' | 'lose',
+  normalLabel: string,
+  normalOdds: number | undefined,
+  handicapOdds: number | undefined,
+  jcHandicap?: string
+) => (
+  <Space direction="vertical" size={4}>
+    {renderOutcomeTag(normalLabel, normalOdds, outcome)}
+    {formatOdds(handicapOdds) !== '-' ? (
+      <Tag color={oddsColorByResult[outcome]} variant="filled" style={{ opacity: 0.7 }}>
+        {`${handicapLabelByOutcome(outcome, jcHandicap)} @ ${formatOdds(handicapOdds)}`}
       </Tag>
     ) : null}
   </Space>
@@ -146,11 +159,11 @@ const formatCrownHandicap = (handicaps?: CrownHandicap[] | CrownHandicap | strin
         return (
           <div key={`${homeType}-${index}`} style={{ marginBottom: 2 }}>
             <div>
-              <Text style={{ color: '#000' }}>{`主胜（${homeType}）：`}</Text>
+              <Text style={{ color: '#000' }}>{`主胜(${homeType})：`}</Text>
               <Text style={{ color: '#1677ff' }}>{formatOdds(item.home_odds)}</Text>
             </div>
             <div>
-              <Text style={{ color: '#000' }}>{`客胜（${awayType}）：`}</Text>
+              <Text style={{ color: '#000' }}>{`客胜(${awayType})：`}</Text>
               <Text style={{ color: '#ff4d4f' }}>{formatOdds(item.away_odds)}</Text>
             </div>
           </div>
@@ -272,20 +285,20 @@ const MatchList: React.FC = () => {
       {
         title: '竞彩胜',
         key: 'j_w_group',
-        width: 120,
-        render: (record: MatchRow) => renderJcOutcomeCell('胜', 'win', record.j_w, record.j_hw),
+        width: 132,
+        render: (record: MatchRow) => renderJcOutcomeCell('win', '主胜', record.j_w, record.j_hw, record.jc_handicap),
       },
       {
         title: '竞彩平',
         key: 'j_d_group',
-        width: 120,
-        render: (record: MatchRow) => renderJcOutcomeCell('平', 'draw', record.j_d, record.j_hd),
+        width: 132,
+        render: (record: MatchRow) => renderJcOutcomeCell('draw', '平', record.j_d, record.j_hd, record.jc_handicap),
       },
       {
         title: '竞彩负',
         key: 'j_l_group',
-        width: 120,
-        render: (record: MatchRow) => renderJcOutcomeCell('负', 'lose', record.j_l, record.j_hl),
+        width: 132,
+        render: (record: MatchRow) => renderJcOutcomeCell('lose', '客胜', record.j_l, record.j_hl, record.jc_handicap),
       },
       {
         title: '皇冠胜',
@@ -293,7 +306,7 @@ const MatchList: React.FC = () => {
         key: 'c_w',
         width: 110,
         responsive: responsiveLg,
-        render: (value: number) => renderOutcomeTag('胜', value, 'win'),
+        render: (value: number) => renderOutcomeTag('主胜', value, 'win'),
       },
       {
         title: '皇冠平',
@@ -309,7 +322,7 @@ const MatchList: React.FC = () => {
         key: 'c_l',
         width: 110,
         responsive: responsiveLg,
-        render: (value: number) => renderOutcomeTag('负', value, 'lose'),
+        render: (value: number) => renderOutcomeTag('客胜', value, 'lose'),
       },
       {
         title: '皇冠让球',
@@ -347,7 +360,7 @@ const MatchList: React.FC = () => {
     []
   );
 
-  const countdownText = `${Math.max(0, remainingSeconds || refreshStatus?.interval_seconds || 0)}秒后同步数据`;
+  const countdownText = `${Math.max(0, remainingSeconds ?? refreshStatus?.interval_seconds ?? 0)}秒后同步数据`;
 
   return (
     <div style={{ maxWidth: 1560, margin: '0 auto' }}>

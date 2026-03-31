@@ -8,7 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "check:text": "node tools/check-text-integrity.mjs .",
+    "check:text:deep": "node tools/check-text-integrity.mjs . --deep",
+    "precommit": "node tools/check-text-integrity.mjs . && npm run -s lint"
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",
