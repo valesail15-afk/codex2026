@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from 'react';
+﻿import React, { useContext, useEffect, useState } from 'react';
 import { Alert, App, Button, Card, Col, Divider, Form, InputNumber, Radio, Row, Space, Switch, Typography } from 'antd';
 import { SaveOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import axios from 'axios';
@@ -179,7 +179,7 @@ const Settings: React.FC = () => {
       <div style={{ marginTop: 20, textAlign: 'center' }}>
         <Space orientation="vertical">
           <Text type="secondary">
-            <SafetyCertificateOutlined /> 足球套利系统
+            <SafetyCertificateOutlined /> 红单神器
           </Text>
         </Space>
       </div>
@@ -188,3 +188,4 @@ const Settings: React.FC = () => {
 };
 
 export default Settings;
+

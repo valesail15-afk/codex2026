@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { Form, Input, Button, Card, Typography, Layout, App } from 'antd';
 import { UserOutlined, LockOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -58,7 +58,7 @@ const Login: React.FC<{ onLoginSuccess: () => Promise<void> }> = ({ onLoginSucce
       <Content style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <Card style={{ width: 400, borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
-            <Title level={2} style={{ margin: 0 }}>足球套利系统</Title>
+            <Title level={2} style={{ margin: 0 }}>红单神器</Title>
             <Text type="secondary">请输入账号密码登录</Text>
           </div>
           <Form name="login" onFinish={onFinish} size="large">
@@ -86,3 +86,4 @@ const Login: React.FC<{ onLoginSuccess: () => Promise<void> }> = ({ onLoginSucce
 };
 
 export default Login;
+

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { Table, Button, Card, Typography, Space, Modal, Form, Input, Select, Tag, Popconfirm, App, DatePicker } from 'antd';
 import { UserAddOutlined, EditOutlined, DeleteOutlined, HistoryOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -343,7 +343,24 @@ const UserManagement: React.FC = () => {
           pagination={false}
           columns={[
             { title: '会话ID', dataIndex: 'session_id', render: (v: string) => String(v).slice(0, 10) + '...' },
-            { title: '设备', dataIndex: 'device_id' },
+            {
+              title: '设备',
+              dataIndex: 'device_id',
+              width: 280,
+              render: (v: string) => (
+                <div
+                  style={{
+                    maxWidth: 260,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={String(v || '-')}
+                >
+                  {v || '-'}
+                </div>
+              ),
+            },
             { title: 'IP', dataIndex: 'ip' },
             { title: '最近活跃', dataIndex: 'last_activity_at', render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-') },
             { title: '状态', dataIndex: 'is_active', render: (v: number) => <Tag color={v ? 'green' : 'default'}>{v ? '在线' : '离线'}</Tag> },
@@ -372,3 +389,4 @@ const UserManagement: React.FC = () => {
 };
 
 export default UserManagement;
+

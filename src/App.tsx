@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Component, ErrorInfo, ReactNode, createContext, useContext, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, Component, ErrorInfo, ReactNode, createContext, useContext, useRef, useCallback } from 'react';
 import { Layout, Menu, App as AntApp, ConfigProvider, theme, Result, Button as AntButton, Spin, Space, Typography, Dropdown, Tag, Modal } from 'antd';
 import {
   DashboardOutlined,
@@ -292,12 +292,13 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            gap: 8,
             color: '#fff',
             fontSize: 18,
             fontWeight: 'bold',
           }}
         >
-          {collapsed ? '⚽' : '足球套利系统'}
+          {collapsed ? '⚽' : '⚽ 红单神器'}
         </div>
         <Menu theme="dark" selectedKeys={[location.pathname]} mode="inline" items={menuItems} />
       </Sider>
@@ -412,3 +413,4 @@ export default function App() {
     </ConfigProvider>
   );
 }
+
