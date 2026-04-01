@@ -117,7 +117,7 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
             logout();
             authChannel.current?.postMessage({ type: 'logout' });
           }
-          return new Promise(() => {});
+          return Promise.reject(error);
         }
         if (error.response?.status === 403) {
           if (user?.role === 'User' && (error.response?.data?.code === 'DURATION_EXCEEDED' || error.response?.data?.code === 'ACCOUNT_EXPIRED')) {
@@ -139,7 +139,7 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
               description: error.response?.data?.error || '您没有权限执行此操作',
             });
           }
-          return new Promise(() => {});
+          return Promise.reject(error);
         }
         return Promise.reject(error);
       }

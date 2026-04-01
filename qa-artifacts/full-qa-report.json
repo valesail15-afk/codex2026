@@ -1,0 +1,94 @@
+{
+  "startedAt": "2026-04-01T02:01:06.403Z",
+  "base": "http://localhost:3001",
+  "checks": [
+    {
+      "name": "登录",
+      "ok": true
+    },
+    {
+      "name": "页面:主控面板",
+      "ok": true,
+      "status": 200,
+      "title": "足球套利系统"
+    },
+    {
+      "name": "页面:比赛列表",
+      "ok": true,
+      "status": 200,
+      "title": "足球套利系统"
+    },
+    {
+      "name": "页面:系统设置",
+      "ok": true,
+      "status": 200,
+      "title": "足球套利系统"
+    },
+    {
+      "name": "页面:用户管理",
+      "ok": true,
+      "status": 200,
+      "title": "足球套利系统"
+    },
+    {
+      "name": "接口:/api/auth/me",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "name": "接口:/api/matches",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "name": "接口:/api/arbitrage/opportunities?base_type=jingcai",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "name": "接口:/api/arbitrage/parlay-opportunities?base_type=jingcai",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "name": "接口:/api/history",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "name": "接口:/api/settings",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "name": "接口:/api/admin/users",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "name": "接口:/api/matches/refresh-status",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "name": "单场计算接口",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "name": "用户增删",
+      "ok": true
+    },
+    {
+      "name": "手动比赛增删",
+      "ok": true
+    },
+    {
+      "name": "设置保存",
+      "ok": true
+    }
+  ],
+  "failures": [],
+  "endedAt": "2026-04-01T02:01:34.792Z",
+  "pass": true
+}

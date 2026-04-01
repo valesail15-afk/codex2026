@@ -1194,12 +1194,12 @@ export class CrawlerService {
     const normalized = items
       .filter((item) => item && item.type && item.home_odds > 0 && item.away_odds > 0)
       .map((item) => ({
-        type: item.type,
+        type: this.normalizeHandicapV2(String(item.type || '')) || String(item.type || ''),
         home_odds: Number(item.home_odds),
         away_odds: Number(item.away_odds),
       }))
       .filter((item) => {
-        const key = `${item.type}|${item.home_odds}|${item.away_odds}`;
+        const key = item.type;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -1795,8 +1795,8 @@ export class CrawlerService {
           lose: chosen.crownOdds.lose > 0 ? String(chosen.crownOdds.lose) : oldMatch.crownOdds?.lose,
         },
         crownHandicaps: this.getValidCrownHandicaps([
-          ...this.getValidCrownHandicaps(this.buildHandicaps(oldMatch)),
           ...this.getValidCrownHandicaps(chosen.handicaps),
+          ...this.getValidCrownHandicaps(this.buildHandicaps(oldMatch)),
         ]),
       };
       if ((patched.crownHandicaps || []).length >= REQUIRED_CROWN_HANDICAP_COUNT) {

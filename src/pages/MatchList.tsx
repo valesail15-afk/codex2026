@@ -138,7 +138,9 @@ const normalizeCrownHandicaps = (input?: CrownHandicap[] | CrownHandicap | strin
     for (const raw of parsed) {
       const item = normalizeItem(raw);
       if (!item) continue;
-      const key = `${formatHandicapType(item.type)}|${formatOdds(item.home_odds)}|${formatOdds(item.away_odds)}`;
+      // Deduplicate by normalized handicap line only. Odds may vary across refreshes,
+      // but the UI should show one row per handicap type.
+      const key = formatHandicapType(item.type);
       if (!uniq.has(key)) uniq.set(key, item);
     }
     return Array.from(uniq.values()).slice(0, 3);

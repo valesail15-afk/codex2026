@@ -1057,6 +1057,7 @@ async function startServer() {
   });
 
   let scanTimer: NodeJS.Timeout | null = null;
+  let autoScanRunning = false;
 
   async function startAutoScan() {
     if (scanTimer) {
@@ -1079,12 +1080,19 @@ async function startServer() {
     
     console.log(`Starting global auto scan every ${interval} seconds`);
     scanTimer = setInterval(async () => {
+      if (autoScanRunning) {
+        console.log('Skip background sync: previous run still in progress');
+        return;
+      }
+      autoScanRunning = true;
       console.log('Running background sync and scan...');
       try {
         await CrawlerService.syncFromExternalScraper();
         setLastSyncTimeMs(Date.now());
       } catch (err) {
         console.error(err);
+      } finally {
+        autoScanRunning = false;
       }
 
     }, interval * 1000);
