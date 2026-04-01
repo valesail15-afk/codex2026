@@ -57,6 +57,8 @@ type HgaMatch = {
 
 const REQUIRED_CROWN_HANDICAP_COUNT = 3;
 const HGA_SESSION_EXPIRED = 'HGA_SESSION_EXPIRED';
+const HGA_ACCOUNT_LOCKED = 'HGA_ACCOUNT_LOCKED';
+const HGA_LOCK_HINT = '密码错误次数过多';
 
 const handicapMappings: Array<[string, string]> = [
   ['平手/半球', '0/0.5'],
@@ -150,8 +152,12 @@ const HTTP_TEXT_CACHE = new Map<string, HttpCacheEntry>();
 const require = createRequire(import.meta.url);
 
 export class CrawlerService {
+  private static hgaLoginBlockedUntil = 0;
+  private static hgaLoginBlockedReason = '';
+  private static hgaRiskBlocked = false;
+
   private static lastFetchMeta: {
-    hga_status: 'ok' | 'empty' | 'failed' | 'timeout' | 'unknown';
+    hga_status: 'ok' | 'empty' | 'failed' | 'timeout' | 'unknown' | 'locked';
     hga_count: number;
     base_count: number;
     merged_count: number;
@@ -516,6 +522,16 @@ export class CrawlerService {
       return [];
     }
 
+    if (this.hgaRiskBlocked) {
+      this.lastFetchMeta.hga_status = 'locked';
+      console.warn(`HGA risk lock detected, skip HGA fetch: ${this.hgaLoginBlockedReason || 'locked by upstream'}`);
+      const withPw = await this.tryPlaywrightFallback(baseMatches, 'hga-locked');
+      if (withPw.length > 0) baseMatches = withPw;
+      const strictBase = strictByHgaHandicapCount(baseMatches);
+      console.warn(`Trade500 strict fallback reference: ${strictBase.length}/${baseMatches.length} matches`);
+      return baseMatches;
+    }
+
     try {
       const hgaMatches = await this.withTimeout(this.fetchHgaMatches(), HGA_FETCH_TIMEOUT_MS, 'HGA fetch timeout');
       this.lastFetchMeta.hga_count = hgaMatches.length;
@@ -541,9 +557,15 @@ export class CrawlerService {
       }
       return merged;
     } catch (err: any) {
-      this.lastFetchMeta.hga_status = String(err?.message || '').includes('timeout') ? 'timeout' : 'failed';
+      const errText = String(err?.message || '');
+      if (errText.includes(HGA_ACCOUNT_LOCKED)) {
+        this.lastFetchMeta.hga_status = 'locked';
+        this.hgaRiskBlocked = true;
+      } else {
+        this.lastFetchMeta.hga_status = errText.includes('timeout') ? 'timeout' : 'failed';
+      }
       console.warn(`HGA source failed, fallback to Trade500 primary source: ${err?.message || err}`);
-      const withPw = await this.tryPlaywrightFallback(baseMatches, 'hga-failed');
+      const withPw = await this.tryPlaywrightFallback(baseMatches, this.lastFetchMeta.hga_status === 'locked' ? 'hga-locked' : 'hga-failed');
       if (withPw.length > 0) baseMatches = withPw;
       const strictBase = strictByHgaHandicapCount(baseMatches);
       console.warn(`Trade500 strict fallback reference: ${strictBase.length}/${baseMatches.length} matches`);
@@ -1291,7 +1313,7 @@ export class CrawlerService {
     const username = process.env.HGA_USERNAME || 'Boom8899';
     const password = process.env.HGA_PASSWORD || 'Aabb112233';
     const uid = await this.hgaLogin(username, password);
-    if (!uid) return [];
+    if (!uid) throw new Error('HGA login failed');
 
     const listXmls = await Promise.all([
       this.fetchHgaGameListXml(uid, 'today', ''),
@@ -1346,6 +1368,15 @@ export class CrawlerService {
   }
 
   private static async hgaLogin(username: string, password: string): Promise<string | null> {
+    if (this.hgaRiskBlocked) {
+      throw new Error(`${HGA_ACCOUNT_LOCKED}: ${this.hgaLoginBlockedReason || 'risk blocked'}`);
+    }
+
+    if (this.hgaLoginBlockedUntil > Date.now()) {
+      const remainSec = Math.ceil((this.hgaLoginBlockedUntil - Date.now()) / 1000);
+      throw new Error(`${HGA_ACCOUNT_LOCKED}: cooldown ${remainSec}s ${this.hgaLoginBlockedReason}`.trim());
+    }
+
     const userAgent = Buffer.from(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       'utf-8'
@@ -1366,7 +1397,20 @@ export class CrawlerService {
     );
 
     const status = this.extractXmlTag(xml, 'status');
-    if (status !== '200') return null;
+    if (status !== '200') {
+      const codeMessage = this.extractXmlTag(xml, 'code_message') || this.extractXmlTag(xml, 'msg') || 'unknown';
+      if (String(codeMessage).includes(HGA_LOCK_HINT)) {
+        // Upstream account lock. Stop using HGA in this process to avoid repeated risky retries.
+        this.hgaLoginBlockedUntil = Date.now() + 30 * 60 * 1000;
+        this.hgaLoginBlockedReason = String(codeMessage);
+        this.hgaRiskBlocked = true;
+        throw new Error(`${HGA_ACCOUNT_LOCKED}: ${codeMessage}`);
+      }
+      return null;
+    }
+    this.hgaLoginBlockedUntil = 0;
+    this.hgaLoginBlockedReason = '';
+    this.hgaRiskBlocked = false;
     const uid = this.extractXmlTag(xml, 'uid');
     return uid || null;
   }

@@ -1,15 +1,19 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { App, Button, Card, Col, Empty, Progress, Row, Select, Space, Statistic, Table, Tag, Typography } from 'antd';
 import { CheckCircleOutlined, FireOutlined, RocketOutlined, SyncOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import dayjs from 'dayjs';
 import { Link } from 'react-router-dom';
 import { normalizeParlaySideLabel, sideToLabel } from '../shared/oddsText';
+import { AuthContext } from '../App';
 
 const { Title, Text } = Typography;
 
 const Dashboard: React.FC = () => {
   const { message } = App.useApp();
+  const auth = useContext(AuthContext);
+  const isAdmin = auth?.user?.role === 'Admin';
+
   const [opportunities, setOpportunities] = useState<any[]>([]);
   const [scrapeHealth, setScrapeHealth] = useState<{ stats: any; rows: any[] } | null>(null);
   const [scrapeHealthError, setScrapeHealthError] = useState<string>('');
@@ -27,13 +31,19 @@ const Dashboard: React.FC = () => {
       const list = Array.isArray(res.data) ? res.data : [];
       list.sort((a: any, b: any) => (b.profit_rate || 0) - (a.profit_rate || 0));
       setOpportunities(list);
-      try {
-        const health = await axios.get('/api/admin/scrape-health', { params: { limit: 20 } });
-        setScrapeHealth(health.data || null);
-        setScrapeHealthError('');
-      } catch {
+
+      if (isAdmin) {
+        try {
+          const health = await axios.get('/api/admin/scrape-health', { params: { limit: 20 } });
+          setScrapeHealth(health.data || null);
+          setScrapeHealthError('');
+        } catch {
+          setScrapeHealth(null);
+          setScrapeHealthError('抓取健康数据加载失败');
+        }
+      } else {
         setScrapeHealth(null);
-        setScrapeHealthError('抓取健康数据加载失败（仅管理员可见）');
+        setScrapeHealthError('');
       }
     } finally {
       setLoading(false);
@@ -65,7 +75,8 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-  }, [oppType]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [oppType, isAdmin]);
 
   const filtered = useMemo(
     () => opportunities.filter((item) => Number(item?.profit_rate || 0) >= minProfitFilter),
@@ -266,48 +277,52 @@ const Dashboard: React.FC = () => {
         />
       </Card>
 
-      <Card title="抓取健康趋势（最近20轮）" style={{ marginTop: 16 }}>
-        {scrapeHealth && Array.isArray(scrapeHealth.rows) && scrapeHealth.rows.length > 0 ? (
-          <>
-          <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
-            <Col span={6}>
-              <Statistic title="成功轮次" value={`${scrapeHealth.stats?.success || 0}/${scrapeHealth.stats?.total || 0}`} />
-            </Col>
-            <Col span={6}>
-              <Statistic title="跳过轮次" value={scrapeHealth.stats?.skipped || 0} />
-            </Col>
-            <Col span={6}>
-              <Statistic title="Playwright兜底次数" value={scrapeHealth.stats?.playwright_used || 0} />
-            </Col>
-            <Col span={6}>
-              <Statistic title="平均耗时" value={scrapeHealth.stats?.avg_duration_ms || 0} suffix="ms" />
-            </Col>
-          </Row>
-          <Table
-            size="small"
-            pagination={false}
-            rowKey="id"
-            dataSource={scrapeHealth.rows}
-            columns={[
-              { title: '时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => dayjs(v).format('MM-DD HH:mm:ss') },
-              { title: '状态', dataIndex: 'status', key: 'status', render: (v: string) => <Tag color={v === 'ok' || v === 'unchanged' ? 'green' : v === 'skipped' ? 'orange' : 'red'}>{v}</Tag> },
-              { title: '场次', key: 'counts', render: (_: any, r: any) => `${r.synced_total}/${r.filtered_total}/${r.fetched_total}` },
-              { title: 'HGA', dataIndex: 'hga_status', key: 'hga_status' },
-              { title: '兜底', dataIndex: 'playwright_fallback_used', key: 'playwright_fallback_used', render: (v: number) => (v ? '是' : '否') },
-              { title: '耗时', dataIndex: 'duration_ms', key: 'duration_ms', render: (v: number) => `${v || 0}ms` },
-            ]}
-          />
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            场次列：同步入库/过滤后/原始抓取
-          </Text>
-          </>
-        ) : (
-          <Empty
-            description={scrapeHealthError || '暂无抓取健康数据，点击“重新扫描”后会产生记录'}
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-          />
-        )}
-      </Card>
+      {isAdmin ? (
+        <Card title="抓取健康趋势（最近20轮）" style={{ marginTop: 16 }}>
+          {scrapeHealth && Array.isArray(scrapeHealth.rows) && scrapeHealth.rows.length > 0 ? (
+            <>
+              <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+                <Col span={6}>
+                  <Statistic title="成功轮次" value={`${scrapeHealth.stats?.success || 0}/${scrapeHealth.stats?.total || 0}`} />
+                </Col>
+                <Col span={6}>
+                  <Statistic title="跳过轮次" value={scrapeHealth.stats?.skipped || 0} />
+                </Col>
+                <Col span={6}>
+                  <Statistic title="Playwright兜底次数" value={scrapeHealth.stats?.playwright_used || 0} />
+                </Col>
+                <Col span={6}>
+                  <Statistic title="平均耗时" value={scrapeHealth.stats?.avg_duration_ms || 0} suffix="ms" />
+                </Col>
+              </Row>
+              <Table
+                size="small"
+                pagination={false}
+                rowKey="id"
+                dataSource={scrapeHealth.rows}
+                columns={[
+                  { title: '时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => dayjs(v).format('MM-DD HH:mm:ss') },
+                  {
+                    title: '状态',
+                    dataIndex: 'status',
+                    key: 'status',
+                    render: (v: string) => <Tag color={v === 'ok' || v === 'unchanged' ? 'green' : v === 'skipped' ? 'orange' : 'red'}>{v}</Tag>,
+                  },
+                  { title: '场次', key: 'counts', render: (_: any, r: any) => `${r.synced_total}/${r.filtered_total}/${r.fetched_total}` },
+                  { title: 'HGA', dataIndex: 'hga_status', key: 'hga_status' },
+                  { title: '兜底', dataIndex: 'playwright_fallback_used', key: 'playwright_fallback_used', render: (v: number) => (v ? '是' : '否') },
+                  { title: '耗时', dataIndex: 'duration_ms', key: 'duration_ms', render: (v: number) => `${v || 0}ms` },
+                ]}
+              />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                场次列：同步入库/过滤后/原始抓取
+              </Text>
+            </>
+          ) : (
+            <Empty description={scrapeHealthError || '暂无抓取健康数据，点击“重新扫描”后会产生记录'} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          )}
+        </Card>
+      ) : null}
     </div>
   );
 };
