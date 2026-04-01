@@ -1289,7 +1289,7 @@ export class CrawlerService {
 
   private static async fetchHgaMatches(): Promise<HgaMatch[]> {
     const username = process.env.HGA_USERNAME || 'Boom8899';
-    const password = process.env.HGA_PASSWORD || 'AaBb1122';
+    const password = process.env.HGA_PASSWORD || 'Aabb112233';
     const uid = await this.hgaLogin(username, password);
     if (!uid) return [];
 

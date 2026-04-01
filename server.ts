@@ -733,8 +733,7 @@ async function startServer() {
       .map((o: any) => ({
         ...o,
         best_strategy: o.best_strategy ? JSON.parse(o.best_strategy) : null
-      }))
-      .filter((o: any) => ArbitrageEngine.hasAllPositiveParlayCombos(o.best_strategy, 0.01));
+      }));
     res.json(rows);
   });
 
@@ -758,9 +757,6 @@ async function startServer() {
 
     if (!row) return res.status(404).json({ error: 'Parlay opportunity not found' });
     const parsed = row.best_strategy ? JSON.parse(row.best_strategy) : null;
-    if (!ArbitrageEngine.hasAllPositiveParlayCombos(parsed, 0.01)) {
-      return res.status(404).json({ error: 'Parlay opportunity no longer valid' });
-    }
     res.json({
       ...row,
       best_strategy: parsed

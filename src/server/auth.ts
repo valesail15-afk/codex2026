@@ -3,10 +3,18 @@ import jwt from 'jsonwebtoken';
 import db from './db';
 
 const jwtSecretFromEnv = process.env.JWT_SECRET;
-if (!jwtSecretFromEnv || jwtSecretFromEnv === 'your-secret-key') {
-  throw new Error('JWT_SECRET 未配置或使用了不安全默认值，请在环境变量中设置高强度密钥。');
+const isProd = process.env.NODE_ENV === 'production';
+const isUnsafe = !jwtSecretFromEnv || jwtSecretFromEnv === 'your-secret-key';
+
+if (isProd && isUnsafe) {
+  throw new Error('JWT_SECRET ?????????????????????????????');
 }
-const JWT_SECRET = jwtSecretFromEnv;
+
+if (!isProd && isUnsafe) {
+  console.warn('[auth] JWT_SECRET ??????????????????????? JWT_SECRET?');
+}
+
+const JWT_SECRET = isUnsafe ? 'dev-only-jwt-secret-change-me' : jwtSecretFromEnv;
 
 export interface AuthRequest extends Request {
   user?: {

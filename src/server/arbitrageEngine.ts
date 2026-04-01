@@ -20,8 +20,10 @@ export class ArbitrageEngine {
 
   static hasAllPositiveParlayCombos(strategy: any, min = 0.01) {
     const combos = strategy?.parlay_combo_details;
-    if (!Array.isArray(combos) || combos.length < 9) return false;
-    return combos.every((x: any) => {
+    if (!Array.isArray(combos) || combos.length === 0) return false;
+    const required = combos.filter((x: any) => x?.need_second_hedge);
+    if (required.length === 0) return false;
+    return required.every((x: any) => {
       const total = Number(x?.total);
       return Number.isFinite(total) && total > min;
     });
@@ -83,7 +85,7 @@ export class ArbitrageEngine {
     }
 
     const score = bet.side === 'home' ? dg + (bet.handicap || 0) : -dg + (bet.handicap || 0);
-    if (score >= 0.5) return 1 + odds;
+    if (score >= 0.5) return odds;
     if (score === 0.25) return 1 + odds * 0.5;
     if (score === 0) return 1;
     if (score === -0.25) return 0.5;
@@ -603,50 +605,106 @@ export class ArbitrageEngine {
     const c2 = this.getCrownOptions(m2);
     if (c1.length === 0 || c2.length === 0) return null;
 
+    const outcomes: Side[] = ['W', 'D', 'L'];
+    const outcomeGoalDiffs: Record<Side, number[]> = {
+      W: [1, 2, 3, 4],
+      D: [0],
+      L: [-1, -2, -3, -4],
+    };
+    const outcomeLabel = (side: Side) => (side === 'W' ? 'win' : side === 'D' ? 'draw' : 'lose');
     const C = A;
-    const rJc = Number(m1.j_r || 0);
-    const rHg = Number(m1.c_r || 0);
+    const rJcRaw = Number(m1.j_r || 0);
+    const rHgRaw = Number(m1.c_r || 0);
     const sJc = Number(m1.j_s || 0);
     const sHg = Number(m1.c_s || 0);
+    // Parlay filtering should use the original rebate mode.
+    // Share ratios are only used later when converting to actual stake / total invest displays.
+    const rJc = rJcRaw;
+    const rHg = rHgRaw;
 
-    const jcRet1 = this.getJingcaiFineReturns(jc1.side, jc1.odds, jc1.market, jc1.handicapLine);
-    const jcRet2 = this.getJingcaiFineReturns(jc2.side, jc2.odds, jc2.market, jc2.handicapLine);
+    const minByGoalDiffs = (dgs: number[], fn: (dg: number) => number) =>
+      dgs.map((dg) => fn(dg)).reduce((min, v) => (v < min ? v : min), Number.POSITIVE_INFINITY);
+    const maxByGoalDiffs = (dgs: number[], fn: (dg: number) => number) =>
+      dgs.map((dg) => fn(dg)).reduce((max, v) => (v > max ? v : max), Number.NEGATIVE_INFINITY);
+    const minByPairs = (dgs1: number[], dgs2: number[], fn: (dg1: number, dg2: number) => number) => {
+      let worst = Number.POSITIVE_INFINITY;
+      for (const dg1 of dgs1) {
+        for (const dg2 of dgs2) {
+          const value = fn(dg1, dg2);
+          if (value < worst) worst = value;
+        }
+      }
+      return worst;
+    };
+
+    const firstJcHits = (side: Side) =>
+      maxByGoalDiffs(outcomeGoalDiffs[side], (dg) =>
+        this.getJingcaiSettlementByGoalDiff(jc1.side, jc1.odds, jc1.market, jc1.handicapLine, dg).c
+      ) > this.EPS;
+
+    const parlayProfit = (side1: Side, side2: Side) =>
+      minByPairs(outcomeGoalDiffs[side1], outcomeGoalDiffs[side2], (dg1, dg2) => {
+        const r1 = this.getJingcaiSettlementByGoalDiff(jc1.side, jc1.odds, jc1.market, jc1.handicapLine, dg1);
+        const r2 = this.getJingcaiSettlementByGoalDiff(jc2.side, jc2.odds, jc2.market, jc2.handicapLine, dg2);
+        const ret = r1.c > this.EPS && r2.c > this.EPS ? jc1.odds * jc2.odds : 0;
+        return C * (ret - 1 + rJc);
+      });
+    const stopAfterFirstProfit = () => C * (-1 + rJc);
 
     const model: any = { optimize: 'z', opType: 'max', constraints: {}, variables: {} };
-    for (let ai = 0; ai < 5; ai++) {
-      for (let bi = 0; bi < 5; bi++) {
-        model.constraints[`p_${ai}_${bi}`] = { min: 0 };
-      }
-    }
     model.constraints.cap = { max: A * 20 };
     model.variables.z = { z: 1, cap: 0 };
-    for (let ai = 0; ai < 5; ai++) {
-      for (let bi = 0; bi < 5; bi++) model.variables.z[`p_${ai}_${bi}`] = -1;
+
+    const requiredKeys: string[] = [];
+    for (const s1 of outcomes) {
+      if (firstJcHits(s1)) {
+        for (const s2 of outcomes) {
+          const key = `p_${s1}_${s2}`;
+          requiredKeys.push(key);
+          model.constraints[key] = { min: -parlayProfit(s1, s2) };
+          model.variables.z[key] = -1;
+        }
+      } else {
+        const key = `p_${s1}_stop`;
+        requiredKeys.push(key);
+        model.constraints[key] = { min: -stopAfterFirstProfit() };
+        model.variables.z[key] = -1;
+      }
     }
 
     c1.forEach((opt, i) => {
-      const ret = this.getCrownFineReturns(opt.type, opt.odds);
       const v: any = { z: 0, cap: 1 };
-      for (let ai = 0; ai < 5; ai++) for (let bi = 0; bi < 5; bi++) v[`p_${ai}_${bi}`] = ret[ai] - 1 + rHg;
+      for (const s1 of outcomes) {
+        const value = minByGoalDiffs(outcomeGoalDiffs[s1], (dg1) => {
+          const ret = this.getReturnCoefficient(opt.type, opt.odds, dg1);
+          const settleRatio = this.getSettlementRatio(opt.type, dg1);
+          return ret - 1 + settleRatio * rHg;
+        });
+        if (firstJcHits(s1)) {
+          for (const s2 of outcomes) v[`p_${s1}_${s2}`] = value;
+        } else {
+          v[`p_${s1}_stop`] = value;
+        }
+      }
       model.variables[`h1_${i}`] = v;
     });
+
     c2.forEach((opt, i) => {
-      const ret = this.getCrownFineReturns(opt.type, opt.odds);
       const v: any = { z: 0, cap: 1 };
-      for (let ai = 0; ai < 5; ai++) for (let bi = 0; bi < 5; bi++) v[`p_${ai}_${bi}`] = ret[bi] - 1 + rHg;
+      for (const s1 of outcomes) {
+        if (!firstJcHits(s1)) continue;
+        for (const s2 of outcomes) {
+          v[`p_${s1}_${s2}`] = minByPairs(outcomeGoalDiffs[s1], outcomeGoalDiffs[s2], (dg1, dg2) => {
+            const firstHit = this.getJingcaiSettlementByGoalDiff(jc1.side, jc1.odds, jc1.market, jc1.handicapLine, dg1).c > this.EPS;
+            if (!firstHit) return 0;
+            const ret = this.getReturnCoefficient(opt.type, opt.odds, dg2);
+            const settleRatio = this.getSettlementRatio(opt.type, dg2);
+            return ret - 1 + settleRatio * rHg;
+          });
+        }
+      }
       model.variables[`h2_${i}`] = v;
     });
-
-    const jcConst: Record<string, number> = {};
-    // 二串一规则：两场都中才有返奖；只中一场按未中奖处理（返奖为 0）。
-    const parlayReturn = (r1: number, r2: number) => (r1 > 0 && r2 > 0 ? r1 * r2 : 0);
-    for (let ai = 0; ai < 5; ai++) {
-      for (let bi = 0; bi < 5; bi++) {
-        const combo = parlayReturn(jcRet1[ai], jcRet2[bi]);
-        jcConst[`p_${ai}_${bi}`] = C * (combo - 1 + rJc);
-      }
-    }
-    Object.keys(jcConst).forEach((k) => (model.constraints[k].min = -jcConst[k]));
 
     const solved: any = solver.Solve(model);
     if (!solved?.feasible) return null;
@@ -662,92 +720,252 @@ export class ArbitrageEngine {
     });
     if (crown_bets.length === 0) return null;
 
-    const evalProfit = (ai: number, bi: number) => {
-      const jc = C * (parlayReturn(jcRet1[ai], jcRet2[bi]) - 1 + rJc);
-      let hg = 0;
-      for (const b of crown_bets) {
-        const idx = b.match_index === 0 ? ai : bi;
-        const ret = this.getCrownFineReturns(b.type, b.odds)[idx];
-        hg += b.amount * (ret - 1 + rHg);
-      }
-      return jc + hg;
+    const m1Bets = crown_bets.filter((b) => Number(b.match_index) === 0);
+    const m2Bets = crown_bets.filter((b) => Number(b.match_index) === 1);
+
+    const firstGrossByOutcome = (s1: Side) =>
+      minByGoalDiffs(outcomeGoalDiffs[s1], (dg) =>
+        m1Bets.reduce((sum, b) => sum + b.amount * this.getReturnCoefficient(b.type, b.odds, dg), 0)
+      );
+
+    const firstProfitByOutcome = (s1: Side) =>
+      minByGoalDiffs(outcomeGoalDiffs[s1], (dg) =>
+        m1Bets.reduce((sum, b) => {
+          const ret = this.getReturnCoefficient(b.type, b.odds, dg);
+          const settleRatio = this.getSettlementRatio(b.type, dg);
+          return sum + b.amount * (ret - 1 + settleRatio * rHg);
+        }, 0)
+      );
+
+    const secondProfitByOutcome = (s2: Side) =>
+      minByGoalDiffs(outcomeGoalDiffs[s2], (dg) =>
+        m2Bets.reduce((sum, b) => {
+          const ret = this.getReturnCoefficient(b.type, b.odds, dg);
+          const settleRatio = this.getSettlementRatio(b.type, dg);
+          return sum + b.amount * (ret - 1 + settleRatio * rHg);
+        }, 0)
+      );
+
+    const evalTotal = (s1: Side, s2: Side) => {
+      const jc = firstJcHits(s1) ? parlayProfit(s1, s2) : stopAfterFirstProfit();
+      const firstP = firstProfitByOutcome(s1);
+      const secondP = firstJcHits(s1) ? secondProfitByOutcome(s2) : 0;
+      return jc + firstP + secondP;
     };
 
-    const minProfit = Math.min(...Array.from({ length: 5 }, (_, ai) => Array.from({ length: 5 }, (_, bi) => evalProfit(ai, bi))).flat());
-    const profits = {
-      win: evalProfit(1, 1),
-      draw: minProfit,
-      lose: evalProfit(3, 3),
-    };
+    const comboDetails: Array<{
+      key: string;
+      first: Side;
+      second: Side;
+      first_label: string;
+      second_label: string;
+      total: number;
+      match: number;
+      rebate: number;
+      need_second_hedge: boolean;
+      first_crown_hit: boolean;
+    }> = [];
+
+    for (const s1 of outcomes) {
+      const firstCrownHit = firstGrossByOutcome(s1) > this.EPS;
+      const needSecondHedge = firstJcHits(s1);
+      for (const s2 of outcomes) {
+        const total = evalTotal(s1, s2);
+        comboDetails.push({
+          key: `${outcomeLabel(s1)}_${outcomeLabel(s2)}`,
+          first: s1,
+          second: s2,
+          first_label: outcomeLabel(s1),
+          second_label: outcomeLabel(s2),
+          total,
+          match: total,
+          rebate: 0,
+          need_second_hedge: needSecondHedge,
+          first_crown_hit: firstCrownHit,
+        });
+      }
+    }
+
+    const requiredCombos = comboDetails.filter((x) => x.need_second_hedge);
+    if (requiredCombos.length === 0) return null;
+    const stopCombos = comboDetails.filter((x) => !x.need_second_hedge);
+    const minProfit = [...requiredCombos, ...stopCombos].reduce((min, x) => (x.total < min ? x.total : min), Number.POSITIVE_INFINITY);
     if (!this.isFinitePositive(minProfit, 0.01)) return null;
 
     const userInvest = C + crown_bets.reduce((s, b) => s + b.amount, 0);
     const totalInvest = C / Math.max(1 - sJc, 0.0001) + crown_bets.reduce((s, b) => s + b.amount / Math.max(1 - sHg, 0.0001), 0);
-
     const rebateValue = C * rJc + crown_bets.reduce((s, b) => s + b.amount * rHg, 0);
-    const scenarioMin = (aIndices: number[], bIndices: number[]) => {
-      let worst = Number.POSITIVE_INFINITY;
-      for (const ai of aIndices) {
-        for (const bi of bIndices) {
-          const p = evalProfit(ai, bi);
-          if (p < worst) worst = p;
-        }
-      }
-      return worst;
+
+    const match1Profit = (side: Side) =>
+      comboDetails.filter((x) => x.first === side).reduce((min, x) => (x.total < min ? x.total : min), Number.POSITIVE_INFINITY);
+
+    const firstHitSides = outcomes.filter((side) => firstJcHits(side));
+    const match2Profit = (side: Side) => {
+      if (!firstHitSides.length) return Number.POSITIVE_INFINITY;
+      return comboDetails
+        .filter((x) => x.need_second_hedge && x.second === side)
+        .reduce((min, x) => (x.total < min ? x.total : min), Number.POSITIVE_INFINITY);
     };
+
     return {
-      name: `二串一LP全覆盖(${jc1.market === 'handicap' ? '让' : '普'}${jc1.side}x${jc2.market === 'handicap' ? '让' : '普'}${jc2.side})`,
+      name: `???LP(${jc1.market === 'handicap' ? '?' : '?'}${jc1.side}x${jc2.market === 'handicap' ? '?' : '?'}${jc2.side})`,
       jcSide: jc1.side,
       crown_bets,
-      profits,
-      match_profits: { win: profits.win - rebateValue, draw: profits.draw - rebateValue, lose: profits.lose - rebateValue },
-      rebate: rebateValue,
-      rebates: {
-        win: rebateValue,
-        draw: rebateValue,
-        lose: rebateValue,
+      profits: {
+        win: match1Profit('W'),
+        draw: match1Profit('D'),
+        lose: match1Profit('L'),
       },
+      match_profits: {
+        win: match1Profit('W') - rebateValue,
+        draw: match1Profit('D') - rebateValue,
+        lose: match1Profit('L') - rebateValue,
+      },
+      rebate: rebateValue,
+      rebates: { win: rebateValue, draw: rebateValue, lose: rebateValue },
       min_profit: minProfit,
       min_profit_rate: minProfit / userInvest,
       total_invest: totalInvest,
       user_invest: userInvest,
       parlay_outcome_details: {
         match1: {
-          win: scenarioMin([0, 1], [0, 1, 2, 3, 4]),
-          draw: scenarioMin([2], [0, 1, 2, 3, 4]),
-          lose: scenarioMin([3, 4], [0, 1, 2, 3, 4]),
+          win: match1Profit('W'),
+          draw: match1Profit('D'),
+          lose: match1Profit('L'),
         },
         match2: {
-          win: scenarioMin([0, 1, 2, 3, 4], [0, 1]),
-          draw: scenarioMin([0, 1, 2, 3, 4], [2]),
-          lose: scenarioMin([0, 1, 2, 3, 4], [3, 4]),
+          win: match2Profit('W'),
+          draw: match2Profit('D'),
+          lose: match2Profit('L'),
         },
       },
+      parlay_combo_details: comboDetails,
     };
   }
 
+  private static parseHandicaps(raw: any): Handicap[] {
+    if (Array.isArray(raw)) return raw as Handicap[];
+    if (typeof raw !== 'string' || !raw.trim()) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as Handicap[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private static getMatchTimeMs(raw: any): number {
+    const ts = new Date(String(raw || '')).getTime();
+    return Number.isFinite(ts) ? ts : 0;
+  }
+
+  private static isSecondMatchLateEnough(first: any, second: any, minHours = 5): boolean {
+    const t1 = this.getMatchTimeMs(first?.match_time);
+    const t2 = this.getMatchTimeMs(second?.match_time);
+    if (!t1 || !t2) return false;
+    return t2 - t1 >= minHours * 60 * 60 * 1000;
+  }
+
+  private static hasSingleArbForSelection(A: number, m: any, selection: { side: Side; market: MarketType; handicapLine?: string }, baseType: 'jingcai' | 'crown') {
+    const jcOdds = {
+      W: Number(m.j_w || 0),
+      D: Number(m.j_d || 0),
+      L: Number(m.j_l || 0),
+      HW: Number(m.j_hw || 0),
+      HD: Number(m.j_hd || 0),
+      HL: Number(m.j_hl || 0),
+      handicapLine: String(m.j_h || m.jc_handicap || m.handicap || '0'),
+      rebate: Number(m.j_r || 0),
+      share: Number(m.j_s || 0),
+    };
+    const crownOdds = {
+      W: Number(m.c_w || 0),
+      D: Number(m.c_d || 0),
+      L: Number(m.c_l || 0),
+      handicaps: this.parseHandicaps(m.c_h),
+      rebate: Number(m.c_r || 0),
+      share: Number(m.c_s || 0),
+    };
+    const all = this.findAllOpportunities(A, jcOdds, crownOdds, baseType);
+    return all.some((x) => x.jcSide === selection.side && x.jc_market === selection.market && this.hasAllPositiveSingleTotalProfits(x, 0.01));
+  }
+
   static findParlayOpportunities(A: number, matches: any[], baseType: 'jingcai' | 'crown' = 'jingcai'): any[] {
-    const buildJc = (m: any) => {
-      const line = String(m.j_h || m.handicap || '0');
+    const buildAllSelections = (m: any) => {
+      const line = String(m.j_h || m.jc_handicap || m.handicap || '0');
       const arr: Array<{ side: Side; odds: number; market: MarketType; handicapLine?: string; label: string }> = [
-        { side: 'W', odds: Number(m.j_w || 0), market: 'normal', label: '普胜' },
-        { side: 'D', odds: Number(m.j_d || 0), market: 'normal', label: '普平' },
-        { side: 'L', odds: Number(m.j_l || 0), market: 'normal', label: '普负' },
+        { side: 'W', odds: Number(m.j_w || 0), market: 'normal', label: '普通胜' },
+        { side: 'D', odds: Number(m.j_d || 0), market: 'normal', label: '普通平' },
+        { side: 'L', odds: Number(m.j_l || 0), market: 'normal', label: '普通负' },
       ];
       if (Number(m.j_hw || 0) > 1) arr.push({ side: 'W', odds: Number(m.j_hw), market: 'handicap', handicapLine: line, label: `让胜(${line})` });
       if (Number(m.j_hd || 0) > 1) arr.push({ side: 'D', odds: Number(m.j_hd), market: 'handicap', handicapLine: line, label: `让平(${line})` });
       if (Number(m.j_hl || 0) > 1) arr.push({ side: 'L', odds: Number(m.j_hl), market: 'handicap', handicapLine: line, label: `让负(${line})` });
-      return arr;
+      return arr.filter((x) => this.isFinitePositive(x.odds));
+    };
+
+    const buildSingleRecommendedSelections = (m: any) => {
+      const jcOdds = {
+        W: Number(m.j_w || 0),
+        D: Number(m.j_d || 0),
+        L: Number(m.j_l || 0),
+        HW: Number(m.j_hw || 0),
+        HD: Number(m.j_hd || 0),
+        HL: Number(m.j_hl || 0),
+        handicapLine: String(m.j_h || m.jc_handicap || m.handicap || '0'),
+        rebate: Number(m.j_r || 0),
+        share: Number(m.j_s || 0),
+      };
+      const crownOdds = {
+        W: Number(m.c_w || 0),
+        D: Number(m.c_d || 0),
+        L: Number(m.c_l || 0),
+        handicaps: this.parseHandicaps(m.c_h),
+        rebate: Number(m.c_r || 0),
+        share: Number(m.c_s || 0),
+      };
+      const singles = this.findAllOpportunities(A, jcOdds, crownOdds, baseType);
+      return singles
+        .filter((s: any) => this.hasAllPositiveSingleTotalProfits(s, 0.01))
+        .map((s: any) => ({
+          side: s.jcSide as Side,
+          odds: Number(s.jc_odds || 0),
+          market: (s.jc_market || 'normal') as MarketType,
+          handicapLine: s.jc_market === 'handicap' ? String(m.j_h || m.jc_handicap || m.handicap || '0') : undefined,
+          label:
+            s.jc_label ||
+            (s.jc_market === 'handicap'
+              ? `${s.jcSide === 'W' ? '让胜' : s.jcSide === 'D' ? '让平' : '让负'}(${String(m.j_h || m.jc_handicap || m.handicap || '0')})`
+              : s.jcSide === 'W'
+              ? '普通胜'
+              : s.jcSide === 'D'
+              ? '普通平'
+              : '普通负'),
+        }))
+        .filter((x: any) => this.isFinitePositive(x.odds));
     };
 
     const list: any[] = [];
     const pool = (matches || []).filter((m) => Number(m.j_w || 0) > 1 || Number(m.j_d || 0) > 1 || Number(m.j_l || 0) > 1).slice(0, 20);
+    const firstLegByMatch = new Map<string, Array<{ side: Side; odds: number; market: MarketType; handicapLine?: string; label: string }>>();
+    for (const m of pool) firstLegByMatch.set(String(m.match_id), buildSingleRecommendedSelections(m));
+
     for (let i = 0; i < pool.length; i++) {
       for (let j = i + 1; j < pool.length; j++) {
-        const m1 = pool[i];
-        const m2 = pool[j];
-        const jc1 = buildJc(m1);
-        const jc2 = buildJc(m2);
+        let m1 = pool[i];
+        let m2 = pool[j];
+        if (!this.isSecondMatchLateEnough(m1, m2, 5)) {
+          if (this.isSecondMatchLateEnough(m2, m1, 5)) {
+            const tmp = m1;
+            m1 = m2;
+            m2 = tmp;
+          } else {
+            continue;
+          }
+        }
+        const jc1 = firstLegByMatch.get(String(m1.match_id)) || [];
+        if (!jc1.length) continue;
+        const jc2 = buildAllSelections(m2);
         for (const a of jc1) {
           for (const b of jc2) {
             const strategy = this.calculateParlayArbitrageFineLP(
@@ -759,8 +977,6 @@ export class ArbitrageEngine {
               baseType
             );
             if (!strategy || strategy.min_profit_rate <= 0) continue;
-            // Parlay recommendations must guarantee all 9 combo totals (including rebates) are positive.
-            if (!this.hasAllPositiveParlayCombos(strategy, 0.01)) continue;
             list.push({
               match_id_1: m1.match_id,
               match_id_2: m2.match_id,
@@ -780,4 +996,3 @@ export class ArbitrageEngine {
     return list.sort((a, b) => b.profit_rate - a.profit_rate).slice(0, 30);
   }
 }
-

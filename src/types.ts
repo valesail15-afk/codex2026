@@ -106,6 +106,8 @@ export interface HedgeStrategy {
     total: number;
     match: number;
     rebate: number;
+    need_second_hedge?: boolean;
+    first_crown_hit?: boolean;
   }>;
 }
 
