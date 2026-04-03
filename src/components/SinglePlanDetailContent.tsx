@@ -656,7 +656,15 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
                           rowKey === 'oddsLabel'
                             ? [{ text: cell.oddsLabel && cell.oddsLabel !== ' @ 0.00' ? cell.oddsLabel : cell.oddsLabel || '' }]
                             : cell[rowKey];
-                        const background = rowKey === 'oddsLabel' && cell.highlighted ? '#e88700' : '#fff';
+                        const hasCoverage = rowKey !== 'oddsLabel' && Array.isArray(lines) && lines.length > 0;
+                        const background =
+                          rowKey === 'oddsLabel'
+                            ? cell.highlighted
+                              ? '#e88700'
+                              : '#fff'
+                            : hasCoverage
+                            ? '#e7f7de'
+                            : '#fff';
                         const color =
                           rowKey === 'oddsLabel'
                             ? cell.highlighted
