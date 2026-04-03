@@ -808,7 +808,7 @@ export class ArbitrageEngine {
     };
 
     return {
-      name: `???LP(${jc1.market === 'handicap' ? '?' : '?'}${jc1.side}x${jc2.market === 'handicap' ? '?' : '?'}${jc2.side})`,
+      name: `二串一LP(${this.formatParlayLegName(jc1)}x${this.formatParlayLegName(jc2)})`,
       jcSide: jc1.side,
       crown_bets,
       profits: {
@@ -857,6 +857,13 @@ export class ArbitrageEngine {
   private static getMatchTimeMs(raw: any): number {
     const ts = new Date(String(raw || '')).getTime();
     return Number.isFinite(ts) ? ts : 0;
+  }
+
+  private static formatParlayLegName(selection: { side: Side; market: MarketType }) {
+    if (selection.market === 'handicap') {
+      return selection.side === 'W' ? '让胜' : selection.side === 'D' ? '让平' : '让负';
+    }
+    return selection.side === 'W' ? '胜' : selection.side === 'D' ? '平' : '负';
   }
 
   private static isSecondMatchLateEnough(first: any, second: any, minHours = 5): boolean {
@@ -946,7 +953,9 @@ export class ArbitrageEngine {
     };
 
     const list: any[] = [];
-    const pool = (matches || []).filter((m) => Number(m.j_w || 0) > 1 || Number(m.j_d || 0) > 1 || Number(m.j_l || 0) > 1).slice(0, 20);
+    // Use the full upcoming match pool here. Truncating to the first 20 rows
+    // can hide valid parlays that exist later in the schedule.
+    const pool = (matches || []).filter((m) => Number(m.j_w || 0) > 1 || Number(m.j_d || 0) > 1 || Number(m.j_l || 0) > 1);
     const firstLegByMatch = new Map<string, Array<{ side: Side; odds: number; market: MarketType; handicapLine?: string; label: string }>>();
     for (const m of pool) firstLegByMatch.set(String(m.match_id), buildSingleRecommendedSelections(m));
 

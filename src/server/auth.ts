@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import db from './db';
+import db, { formatLocalDbDateTime } from './db';
 
 const jwtSecretFromEnv = process.env.JWT_SECRET;
 const isProd = process.env.NODE_ENV === 'production';
@@ -32,7 +32,7 @@ function isExpired(expiresAt?: string | null) {
 }
 
 function invalidateAllSessions(userId: number) {
-  db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND is_active = 1').run(userId);
+  db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = ? WHERE user_id = ? AND is_active = 1').run(formatLocalDbDateTime(), userId);
 }
 
 export const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -51,7 +51,7 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
     if (!session) return res.status(401).json({ error: 'Session invalid' });
 
     if (session.expires_at && new Date(session.expires_at).getTime() <= Date.now()) {
-      db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = CURRENT_TIMESTAMP WHERE id = ?').run(session.id);
+      db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = ? WHERE id = ?').run(formatLocalDbDateTime(), session.id);
       return res.status(401).json({ error: 'Session expired' });
     }
 
@@ -61,12 +61,12 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
     }
 
     if (dbUser.role !== 'Admin' && isExpired(dbUser.expires_at)) {
-      db.prepare("UPDATE users SET status = 'expired', is_locked = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(dbUser.id);
+      db.prepare("UPDATE users SET status = 'expired', is_locked = 0, updated_at = ? WHERE id = ?").run(formatLocalDbDateTime(), dbUser.id);
       invalidateAllSessions(dbUser.id);
       return res.status(403).json({ error: 'Account expired', code: 'ACCOUNT_EXPIRED', expires_at: dbUser.expires_at });
     }
 
-    db.prepare('UPDATE user_sessions SET last_activity_at = CURRENT_TIMESTAMP WHERE id = ?').run(session.id);
+    db.prepare('UPDATE user_sessions SET last_activity_at = ? WHERE id = ?').run(formatLocalDbDateTime(), session.id);
     // 权限以数据库实时角色为准，避免 token 中旧 role 导致越权
     req.user = { id: dbUser.id, username: dbUser.username, role: dbUser.role, sid: payload.sid };
     next();
@@ -83,11 +83,11 @@ export const generateToken = (user: { id: number; username: string; role: string
 };
 
 export const logAction = (userId: number | null, username: string | null, action: string, content: string, ip: string) => {
-  db.prepare('INSERT INTO logs (user_id, username, action, content, ip) VALUES (?, ?, ?, ?, ?)').run(userId, username, action, content, ip);
+  db.prepare('INSERT INTO logs (user_id, username, action, content, ip, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(userId, username, action, content, ip, formatLocalDbDateTime());
 };
 
 export const revokeSession = (sessionId: string) => {
-  db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = CURRENT_TIMESTAMP WHERE session_id = ?').run(sessionId);
+  db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = ? WHERE session_id = ?').run(formatLocalDbDateTime(), sessionId);
 };
 
 export const revokeAllUserSessions = (userId: number) => {

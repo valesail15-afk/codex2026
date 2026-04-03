@@ -16,6 +16,7 @@ import MatchList from './pages/MatchList';
 import Calculator from './pages/Calculator';
 import ParlayCalculator from './pages/ParlayCalculator';
 import Settings from './pages/Settings';
+import HgaTeamAliasSettings from './pages/HgaTeamAliasSettings';
 import Login from './pages/Login';
 import UserManagement from './pages/UserManagement';
 
@@ -59,6 +60,7 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   const { notification, modal } = AntApp.useApp();
   const isExpiredModalShown = useRef(false);
   const authChannel = useRef<BroadcastChannel | null>(null);
+  const logoutInFlight = useRef(false);
 
   useEffect(() => {
     authChannel.current = new BroadcastChannel('auth_channel');
@@ -89,16 +91,43 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     }
   }, []);
 
+  const clearAuthState = useCallback((broadcast: boolean) => {
+    setUser(null);
+    setRemainingSeconds(null);
+    isExpiredModalShown.current = false;
+    if (broadcast) {
+      authChannel.current?.postMessage({ type: 'logout' });
+    }
+    if (location.pathname !== '/login') {
+      navigate('/login', { replace: true });
+    }
+  }, [location.pathname, navigate]);
+
   const logout = useCallback(async () => {
+    if (logoutInFlight.current) return;
+    logoutInFlight.current = true;
     try {
       await axios.post('/api/auth/logout');
     } catch (error) {
-      console.error('Logout failed:', error);
+      if (!(axios.isAxiosError(error) && error.response?.status === 401)) {
+        console.error('Logout failed:', error);
+      }
     } finally {
-      setUser(null);
-      navigate('/login');
+      clearAuthState(true);
     }
-  }, [navigate]);
+  }, [clearAuthState]);
+
+  const forceLogout = useCallback(() => {
+    if (logoutInFlight.current) return;
+    logoutInFlight.current = true;
+    clearAuthState(true);
+  }, [clearAuthState]);
+
+  useEffect(() => {
+    if (user || location.pathname === '/login') {
+      logoutInFlight.current = false;
+    }
+  }, [user, location.pathname]);
 
   useEffect(() => {
     if (location.pathname === '/login') {
@@ -112,10 +141,13 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     const interceptor = axios.interceptors.response.use(
       (response) => response,
       (error) => {
+        const requestUrl = String(error.config?.url || '');
         if (error.response?.status === 401) {
+          if (requestUrl.includes('/api/auth/logout')) {
+            return Promise.reject(error);
+          }
           if (location.pathname !== '/login') {
-            logout();
-            authChannel.current?.postMessage({ type: 'logout' });
+            forceLogout();
           }
           return Promise.reject(error);
         }
@@ -130,7 +162,6 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
               okText: '重新登录',
               onOk: () => {
                 logout();
-                authChannel.current?.postMessage({ type: 'logout' });
               },
             });
           } else {
@@ -145,7 +176,7 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       }
     );
     return () => axios.interceptors.response.eject(interceptor);
-  }, [user, logout, notification, modal, location.pathname]);
+  }, [user, logout, forceLogout, notification, modal, location.pathname]);
 
   useEffect(() => {
     if (user && user.role === 'User') {
@@ -171,7 +202,6 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
         okText: '重新登录',
         onOk: () => {
           logout();
-          authChannel.current?.postMessage({ type: 'logout' });
         },
       });
     }
@@ -270,6 +300,11 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       ? [{ key: '/admin/users', icon: <TeamOutlined />, label: <Link to="/admin/users">用户管理</Link> }]
       : []),
   ];
+  const selectedMenuKey = location.pathname.startsWith('/settings')
+    ? '/settings'
+    : location.pathname.startsWith('/admin/users')
+      ? '/admin/users'
+      : location.pathname;
 
   const userMenu = {
     items: [
@@ -300,7 +335,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         >
           {collapsed ? '⚽' : '⚽ 红单神器'}
         </div>
-        <Menu theme="dark" selectedKeys={[location.pathname]} mode="inline" items={menuItems} />
+        <Menu theme="dark" selectedKeys={[selectedMenuKey]} mode="inline" items={menuItems} />
       </Sider>
       <Layout>
         <Header
@@ -392,6 +427,7 @@ export default function App() {
                           <Route path="/calculator/:matchId" element={<Calculator />} />
                           <Route path="/calculator/parlay/:id" element={<ParlayCalculator />} />
                           <Route path="/settings" element={<Settings />} />
+                          <Route path="/settings/hga-team-aliases" element={<HgaTeamAliasSettings />} />
                           <Route
                             path="/admin/users"
                             element={

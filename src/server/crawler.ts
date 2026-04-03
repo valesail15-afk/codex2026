@@ -1,5 +1,7 @@
 import { load } from 'cheerio';
-import db from './db';
+import fs from 'fs';
+import path from 'path';
+import db, { formatLocalDbDateTime } from './db';
 import { ArbitrageEngine } from './arbitrageEngine';
 import { createRequire } from 'module';
 
@@ -58,7 +60,33 @@ type HgaMatch = {
 const REQUIRED_CROWN_HANDICAP_COUNT = 3;
 const HGA_SESSION_EXPIRED = 'HGA_SESSION_EXPIRED';
 const HGA_ACCOUNT_LOCKED = 'HGA_ACCOUNT_LOCKED';
+const HGA_CREDENTIALS_INVALID = 'HGA_CREDENTIALS_INVALID';
+const HGA_DOUBLE_LOGIN = 'HGA_DOUBLE_LOGIN';
 const HGA_LOCK_HINT = '密码错误次数过多';
+const HGA_CREDENTIAL_ERROR_HINTS = ['请检查账号或密码', '账号或密码错误', '密码错误', '登录失败'];
+const DEFAULT_TEAM_NAME_ALIAS_MAP: Record<string, string> = {
+  奥克兰fc: '奥克兰',
+  女王公园巡游者: '女王公园',
+  诺维奇: '诺域治',
+  朴次茅斯: '朴茨茅夫',
+  西布罗姆维奇: '西布朗',
+  吉达联合: '伊蒂哈德吉达',
+  拉斯决心: '艾哈斯姆',
+  拉瓦勒: '拉华尔',
+  巴黎圣日尔曼: '巴黎圣曼',
+  巴黎圣日耳曼: '巴黎圣曼',
+  巴黎圣曼: '巴黎圣日耳曼',
+  图卢兹: '图鲁兹',
+  里斯本竞技: '士砵亭',
+  士砵亭: '里斯本竞技',
+  圣克拉拉: '圣塔克莱拉',
+  巴列卡诺: '华历简奴',
+  埃尔切: '艾尔切',
+  圣旺红星: '红星',
+};
+const DEFAULT_FIXTURE_PAIR_ALIAS_MAP: Record<string, string> = {
+  '西布罗姆维奇|雷克斯汉姆': '西布朗|威斯汉姆',
+};
 
 const handicapMappings: Array<[string, string]> = [
   ['平手/半球', '0/0.5'],
@@ -91,7 +119,7 @@ const HANDICAP_TEXT_MAP: Record<string, string> = {
 const HGA_BASE_URL = 'https://hga050.com/transform_nl.php';
 const HGA_ALT_BASE_URL = 'https://hga050.com/transform.php';
 const HGA_VER = '2026-03-19-fireicon_142';
-const HGA_FETCH_TIMEOUT_MS = 25000;
+const HGA_FETCH_TIMEOUT_MS = 90000;
 const SYNC_MIN_ROW_RATIO = 0.6;
 const PLAYWRIGHT_FALLBACK_TIMEOUT_MS = 45000;
 const TRADE500_XML_NSPF_URL = 'https://trade.500.com/static/public/jczq/newxml/pl/pl_nspf_2.xml';
@@ -99,6 +127,11 @@ const TRADE500_XML_SPF_URL = 'https://trade.500.com/static/public/jczq/newxml/pl
 const TRADE500_ODDS_XML_HOSTS = ['https://www.500.com', 'https://trade.500.com', 'https://ews.500.com'];
 const TRADE500_ODDS_XML_PATH = '/static/public/jczq/xml/odds/odds.xml';
 const TRADE500_XML_STALE_DAYS = 2;
+const LIVE500_JCZQ_URL = 'https://live.500.com/jczq.php';
+const ODDS500_OUZHI_URL = 'https://odds.500.com/fenxi/ouzhi-';
+const LIVE500_CROWN_COMPANY_ID = '280';
+const LIVE500_CROWN_FETCH_CONCURRENCY = 4;
+const HGA_TEAM_ALIAS_MAP_FILE = path.resolve(process.cwd(), 'config', 'hga-team-alias-map.json');
 
 type Trade500XmlRow = {
   date: string;
@@ -119,6 +152,11 @@ type Trade500DomHandicap = {
 type Trade500DomHandicapMap = {
   byExact: Map<string, Trade500DomHandicap>;
   byMatchnum: Map<string, Trade500DomHandicap>;
+};
+
+type Live500FixtureMap = {
+  byExact: Map<string, string>;
+  byMatchnum: Map<string, string>;
 };
 
 type HttpCacheEntry = {
@@ -155,6 +193,14 @@ export class CrawlerService {
   private static hgaLoginBlockedUntil = 0;
   private static hgaLoginBlockedReason = '';
   private static hgaRiskBlocked = false;
+  private static hgaLastStatus: 'unknown' | 'disabled' | 'ok' | 'empty' | 'failed' | 'timeout' | 'locked' = 'unknown';
+  private static hgaLastMessage = '';
+  private static hgaMappingCache:
+    | {
+        teamAliasMap: Record<string, string>;
+        teamAliasMapText: string;
+      }
+    | null = null;
 
   private static lastFetchMeta: {
     hga_status: 'ok' | 'empty' | 'failed' | 'timeout' | 'unknown' | 'locked';
@@ -170,6 +216,10 @@ export class CrawlerService {
     playwright_fallback_used: false,
   };
 
+  private static async yieldToEventLoop() {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+
   static async mockCrawl() {
     return this.syncFromExternalScraper();
   }
@@ -178,9 +228,248 @@ export class CrawlerService {
     return this.syncFromExternalScraper();
   }
 
+  static getHgaStatus() {
+    const config = this.getHgaConfig();
+    const persistedRuntime = this.getPersistedHgaRuntimeState();
+    const runtimeStatus = this.hgaLastStatus !== 'unknown' ? this.hgaLastStatus : persistedRuntime.status;
+    const runtimeMessage = this.hgaLastMessage || persistedRuntime.message;
+    const derivedStatus = !config.enabled
+      ? runtimeStatus === 'failed' && runtimeMessage
+        ? 'failed'
+        : 'disabled'
+      : this.hgaRiskBlocked
+        ? 'locked'
+        : runtimeStatus;
+    const derivedMessage = !config.enabled
+      ? runtimeMessage || 'HGA 抓取已关闭，当前仅使用 Trade500 主链路'
+      : this.hgaRiskBlocked
+        ? this.hgaLoginBlockedReason || runtimeMessage || 'HGA 已被上游风控锁定'
+        : runtimeMessage;
+    return {
+      enabled: config.enabled,
+      username: config.username,
+      password_configured: Boolean(config.password),
+      status: derivedStatus,
+      message: derivedMessage,
+      blocked_until: this.hgaLoginBlockedUntil > 0 ? new Date(this.hgaLoginBlockedUntil).toISOString() : null,
+      last_fetch_meta: { ...this.lastFetchMeta },
+    };
+  }
+
+  static resetHgaRuntimeState() {
+    this.hgaLoginBlockedUntil = 0;
+    this.hgaLoginBlockedReason = '';
+    this.hgaRiskBlocked = false;
+    this.hgaLastStatus = 'unknown';
+    this.hgaLastMessage = '';
+    this.persistHgaRuntimeState('unknown', '');
+  }
+
+  static resetHgaMappingCache() {
+    this.hgaMappingCache = null;
+  }
+
+  static getHgaMappingSettings() {
+    const mappings = this.getHgaMappings();
+    return {
+      hga_team_alias_map: mappings.teamAliasMapText,
+    };
+  }
+
+  static getDefaultHgaTeamAliasMapText() {
+    const fileRaw = this.readHgaTeamAliasMapFile();
+    return this.parseStoredJsonMap(fileRaw, DEFAULT_TEAM_NAME_ALIAS_MAP).text;
+  }
+
+  static saveHgaTeamAliasMap(raw: string) {
+    const parsed = this.parseStoredJsonMap(raw, DEFAULT_TEAM_NAME_ALIAS_MAP);
+    fs.mkdirSync(path.dirname(HGA_TEAM_ALIAS_MAP_FILE), { recursive: true });
+    fs.writeFileSync(HGA_TEAM_ALIAS_MAP_FILE, parsed.text, 'utf8');
+    this.resetHgaMappingCache();
+    return parsed.text;
+  }
+
+  static async testHgaLogin(input?: { username?: string; password?: string }) {
+    const config = this.getHgaConfig();
+    const username = String(input?.username ?? config.username ?? '').trim();
+    const password = String(input?.password ?? config.password ?? '').trim();
+
+    if (!username || !password) {
+      return {
+        status: 'missing' as const,
+        message: '测试失败：请先填写可用的 HGA 账号和密码',
+      };
+    }
+
+    try {
+      const uid = await this.hgaLogin(username, password);
+      if (!uid) {
+        return {
+          status: 'failed' as const,
+          message: '测试失败：HGA 登录未通过，请检查账号或密码',
+        };
+      }
+      return {
+        status: 'ok' as const,
+        message: '测试成功：HGA 登录正常，可正常摘取数据',
+      };
+    } catch (err: any) {
+      const errText = String(err?.message || err || '');
+      if (errText.includes(HGA_ACCOUNT_LOCKED)) {
+        return {
+          status: 'locked' as const,
+          message: `测试失败：${this.hgaLoginBlockedReason || errText || 'HGA 账号已被锁定'}`,
+        };
+      }
+      if (errText.includes('fetch failed') || errText.includes('Client network socket disconnected') || errText.includes('ECONNRESET') || errText.includes('ENOTFOUND')) {
+        return {
+          status: 'failed' as const,
+          message: '测试失败：HGA 站点连接失败，请检查当前网络、代理或目标站点状态',
+        };
+      }
+      if (errText.includes('HGA request failed: 403') || errText.includes('HGA request failed: 401')) {
+        return {
+          status: 'failed' as const,
+          message: '测试失败：HGA 拒绝了当前登录请求，请检查账号状态或站点风控',
+        };
+      }
+      return {
+        status: errText.includes('timeout') ? ('timeout' as const) : ('failed' as const),
+        message: errText.includes('timeout')
+          ? '测试失败：HGA 登录请求超时，请稍后重试'
+          : errText === 'unknown' || errText.includes('请检查账号或密码')
+          ? '测试失败：HGA 账号或密码错误'
+          : `测试失败：${errText || 'HGA 登录测试失败'}`,
+      };
+    }
+  }
+
+  private static getAdminUserId() {
+    const admin = db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as { id?: number } | undefined;
+    return admin?.id || 0;
+  }
+
+  private static getPersistedHgaRuntimeState() {
+    const adminId = this.getAdminUserId();
+    if (!adminId) {
+      return { status: 'unknown', message: '' };
+    }
+    const rows = db
+      .prepare(
+        "SELECT key, value FROM system_settings WHERE user_id = ? AND key IN ('hga_runtime_status', 'hga_runtime_message')"
+      )
+      .all(adminId) as Array<{ key: string; value: string }>;
+    const map = rows.reduce<Record<string, string>>((acc, curr) => {
+      acc[curr.key] = String(curr.value || '');
+      return acc;
+    }, {});
+    return {
+      status: map.hga_runtime_status || 'unknown',
+      message: map.hga_runtime_message || '',
+    };
+  }
+
+  private static persistHgaRuntimeState(status: string, message: string) {
+    const adminId = this.getAdminUserId();
+    if (!adminId) return;
+    db.prepare('INSERT OR REPLACE INTO system_settings (user_id, key, value) VALUES (?, ?, ?)').run(
+      adminId,
+      'hga_runtime_status',
+      String(status || 'unknown')
+    );
+    db.prepare('INSERT OR REPLACE INTO system_settings (user_id, key, value) VALUES (?, ?, ?)').run(
+      adminId,
+      'hga_runtime_message',
+      String(message || '')
+    );
+  }
+
+  private static setHgaRuntimeState(
+    status: 'unknown' | 'disabled' | 'ok' | 'empty' | 'failed' | 'timeout' | 'locked',
+    message: string
+  ) {
+    this.hgaLastStatus = status;
+    this.hgaLastMessage = message;
+    this.persistHgaRuntimeState(status, message);
+  }
+
+  private static disableHgaByCredentialFailure(message: string) {
+    const adminId = this.getAdminUserId();
+    const nextMessage = message || '检测到 HGA 账号或密码错误，已自动关闭 HGA 抓取，请更新配置后手动重新开启';
+    if (adminId) {
+      db.prepare('INSERT OR REPLACE INTO system_settings (user_id, key, value) VALUES (?, ?, ?)').run(
+        adminId,
+        'hga_enabled',
+        'false'
+      );
+    }
+    this.hgaLoginBlockedUntil = 0;
+    this.hgaLoginBlockedReason = '';
+    this.hgaRiskBlocked = false;
+    this.setHgaRuntimeState('failed', nextMessage);
+  }
+
+  private static isHgaCredentialError(message: string) {
+    const text = String(message || '').trim();
+    return HGA_CREDENTIAL_ERROR_HINTS.some((hint) => text.includes(hint));
+  }
+
+  private static parseStoredJsonMap(raw: string, fallback: Record<string, string>) {
+    try {
+      const parsed = JSON.parse(String(raw || '').trim());
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return { map: { ...fallback }, text: JSON.stringify(fallback, null, 2) };
+      }
+      const normalized = Object.entries(parsed).reduce<Record<string, string>>((acc, [key, value]) => {
+        const nextKey = String(key || '').trim();
+        const nextValue = String(value || '').trim();
+        if (!nextKey || !nextValue) return acc;
+        acc[nextKey] = nextValue;
+        return acc;
+      }, {});
+      return {
+        map: Object.keys(normalized).length > 0 ? normalized : { ...fallback },
+        text: JSON.stringify(Object.keys(normalized).length > 0 ? normalized : fallback, null, 2),
+      };
+    } catch {
+      return { map: { ...fallback }, text: JSON.stringify(fallback, null, 2) };
+    }
+  }
+
+  private static getHgaMappings() {
+    if (this.hgaMappingCache) return this.hgaMappingCache;
+    const adminId = this.getAdminUserId();
+    const rows = adminId
+      ? (db
+          .prepare(
+            "SELECT key, value FROM system_settings WHERE user_id = ? AND key IN ('hga_team_alias_map')"
+          )
+          .all(adminId) as Array<{ key: string; value: string }>)
+      : [];
+    const map = rows.reduce<Record<string, string>>((acc, curr) => {
+      acc[curr.key] = String(curr.value || '');
+      return acc;
+    }, {});
+    const fileRaw = this.readHgaTeamAliasMapFile();
+    const teamAlias = this.parseStoredJsonMap(map.hga_team_alias_map || fileRaw, DEFAULT_TEAM_NAME_ALIAS_MAP);
+    this.hgaMappingCache = {
+      teamAliasMap: teamAlias.map,
+      teamAliasMapText: teamAlias.text,
+    };
+    return this.hgaMappingCache;
+  }
+
+  private static readHgaTeamAliasMapFile() {
+    try {
+      if (!fs.existsSync(HGA_TEAM_ALIAS_MAP_FILE)) return '';
+      return fs.readFileSync(HGA_TEAM_ALIAS_MAP_FILE, 'utf8');
+    } catch {
+      return '';
+    }
+  }
+
   static async syncFromExternalScraper() {
     const startedAt = Date.now();
-    const onlyCompleteMatches = this.shouldOnlySyncCompleteMatches();
     const rawMatches = await this.fetchExternalMatches();
     if (rawMatches.length === 0) {
       console.warn('External scraper returned 0 matches, skip overwrite and keep existing database rows');
@@ -195,27 +484,31 @@ export class CrawlerService {
       });
       return 0;
     }
-    const matches = onlyCompleteMatches ? rawMatches.filter((match) => this.isMatchComplete(match)) : rawMatches;
+    const matches = rawMatches;
     const existingHandicapMap = this.getExistingCrownHandicapMap();
     const incomingRows = matches.map((match) => this.toNormalizedSyncRow(match, existingHandicapMap));
     const currentRows = this.getCurrentNonManualSyncRows();
     const currentMap = new Map(currentRows.map((row) => [row.match_id, row] as const));
     const stabilizedRows = incomingRows.map((row) => this.stabilizeRowWithCurrent(row, currentMap.get(row.match_id)));
+    const comparableCurrentRows = this.getComparableCurrentRowsByDate(currentRows, stabilizedRows);
 
-    if (currentRows.length > 0 && stabilizedRows.length < Math.max(1, Math.floor(currentRows.length * SYNC_MIN_ROW_RATIO))) {
+    if (
+      comparableCurrentRows.length > 0 &&
+      stabilizedRows.length < Math.max(1, Math.floor(comparableCurrentRows.length * SYNC_MIN_ROW_RATIO))
+    ) {
       console.warn(
-        `External scraper row count dropped too much (${stabilizedRows.length}/${currentRows.length}), skip overwrite to avoid partial-data regression`
+        `External scraper row count dropped too much (${stabilizedRows.length}/${comparableCurrentRows.length}), skip overwrite to avoid partial-data regression`
       );
       this.logScrapeHealth({
         status: 'skipped',
         fetched_total: rawMatches.length,
         filtered_total: matches.length,
-        synced_total: currentRows.length,
+        synced_total: comparableCurrentRows.length,
         complete_total: matches.filter((m) => this.isMatchComplete(m as any)).length,
         note: 'row drop protection triggered',
         duration_ms: Date.now() - startedAt,
       });
-      return currentRows.length;
+      return comparableCurrentRows.length;
     }
 
     if (this.isSameSyncRows(currentRows, stabilizedRows)) {
@@ -233,6 +526,7 @@ export class CrawlerService {
     }
 
     db.transaction(() => {
+      const nowText = formatLocalDbDateTime();
       db.prepare('DELETE FROM arbitrage_opportunities').run();
       db.prepare('DELETE FROM parlay_opportunities').run();
       db.prepare("DELETE FROM crown_odds WHERE match_id NOT LIKE 'manual_%'").run();
@@ -240,8 +534,8 @@ export class CrawlerService {
       db.prepare("DELETE FROM matches WHERE match_id NOT LIKE 'manual_%'").run();
 
       const insertMatch = db.prepare(`
-        INSERT INTO matches (match_id, league, round, handicap, jingcai_handicap, home_team, away_team, match_time, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'upcoming')
+        INSERT INTO matches (match_id, league, round, handicap, jingcai_handicap, home_team, away_team, match_time, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'upcoming', ?, ?)
       `);
 
       const insertJingcai = db.prepare(`
@@ -271,7 +565,9 @@ export class CrawlerService {
           row.jingcai_handicap,
           row.home_team,
           row.away_team,
-          row.match_time
+          row.match_time,
+          nowText,
+          nowText
         );
 
         insertJingcai.run(
@@ -296,20 +592,18 @@ export class CrawlerService {
 
     const users = db.prepare('SELECT id FROM users').all() as Array<{ id: number }>;
     for (const user of users) {
+      await this.yieldToEventLoop();
       await this.scanOpportunities(user.id);
     }
 
-    console.log(
-      `External scraper sync completed with ${stabilizedRows.length} matches` +
-        (onlyCompleteMatches ? ` (filtered from ${rawMatches.length})` : '')
-    );
+    console.log(`External scraper sync completed with ${stabilizedRows.length} matches`);
     this.logScrapeHealth({
       status: 'ok',
       fetched_total: rawMatches.length,
       filtered_total: matches.length,
       synced_total: stabilizedRows.length,
       complete_total: matches.filter((m) => this.isMatchComplete(m as any)).length,
-      note: onlyCompleteMatches ? 'only_complete_matches=true' : '',
+      note: '',
       duration_ms: Date.now() - startedAt,
     });
     return stabilizedRows.length;
@@ -346,8 +640,8 @@ export class CrawlerService {
     ).run();
     db.prepare(
       `INSERT INTO scrape_health_logs
-       (source, status, fetched_total, filtered_total, synced_total, complete_total, hga_status, hga_count, base_count, merged_count, playwright_fallback_used, note, duration_ms)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (source, status, fetched_total, filtered_total, synced_total, complete_total, hga_status, hga_count, base_count, merged_count, playwright_fallback_used, note, duration_ms, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       'external',
       payload.status,
@@ -361,7 +655,8 @@ export class CrawlerService {
       meta.merged_count,
       meta.playwright_fallback_used ? 1 : 0,
       payload.note || '',
-      payload.duration_ms
+      payload.duration_ms,
+      formatLocalDbDateTime()
     );
   }
 
@@ -408,15 +703,23 @@ export class CrawlerService {
     return map;
   }
 
-  private static mergeHandicapCandidates(primary: ExternalHandicap[], secondary: ExternalHandicap[]) {
-    return this.getValidCrownHandicaps([...(primary || []), ...(secondary || [])]).slice(0, REQUIRED_CROWN_HANDICAP_COUNT);
+  private static mergeHandicapCandidates(
+    primary: ExternalHandicap[],
+    secondary: ExternalHandicap[],
+    options?: { preferPrimaryZero?: boolean }
+  ) {
+    let secondaryItems = secondary || [];
+    if (options?.preferPrimaryZero && (primary || []).some((item) => this.isZeroHandicapType(item?.type))) {
+      secondaryItems = secondaryItems.filter((item) => !this.isZeroHandicapType(item?.type));
+    }
+    return this.getValidCrownHandicaps([...(primary || []), ...secondaryItems]).slice(0, REQUIRED_CROWN_HANDICAP_COUNT);
   }
 
   private static buildHandicapsWithFallback(match: ExternalMatch, existingMap: Map<string, ExternalHandicap[]>) {
     const latest = this.buildHandicaps(match);
     if (latest.length >= REQUIRED_CROWN_HANDICAP_COUNT) return latest.slice(0, REQUIRED_CROWN_HANDICAP_COUNT);
     const old = existingMap.get(match.id) || [];
-    return this.mergeHandicapCandidates(latest, old);
+    return this.mergeHandicapCandidates(latest, old, { preferPrimaryZero: true });
   }
 
   private static toNormalizedSyncRow(match: ExternalMatch, existingMap: Map<string, ExternalHandicap[]>): NormalizedSyncRow {
@@ -486,6 +789,17 @@ export class CrawlerService {
     });
   }
 
+  private static getComparableCurrentRowsByDate(currentRows: NormalizedSyncRow[], incomingRows: NormalizedSyncRow[]) {
+    if (currentRows.length === 0 || incomingRows.length === 0) return [];
+    const incomingDates = new Set(
+      incomingRows
+        .map((row) => this.normalizeMatchTime(row.match_time).slice(0, 10))
+        .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
+    );
+    if (incomingDates.size === 0) return currentRows;
+    return currentRows.filter((row) => incomingDates.has(this.normalizeMatchTime(row.match_time).slice(0, 10)));
+  }
+
   private static serializeSyncRows(rows: NormalizedSyncRow[]) {
     const normalized = rows
       .map((row) => ({
@@ -509,6 +823,7 @@ export class CrawlerService {
       merged_count: 0,
       playwright_fallback_used: false,
     };
+    const hgaConfig = this.getHgaConfig();
     const strictByHgaHandicapCount = (rows: ExternalMatch[]) =>
       rows.filter((match) => this.getValidCrownHandicaps(this.buildHandicaps(match)).length >= REQUIRED_CROWN_HANDICAP_COUNT);
 
@@ -519,11 +834,27 @@ export class CrawlerService {
     } catch (err: any) {
       console.warn(`Trade500 primary source failed: ${err?.message || err}`);
       this.lastFetchMeta.hga_status = 'failed';
+      this.setHgaRuntimeState('failed', `Trade500 主链路失败：${err?.message || err}`);
       return [];
+    }
+
+    if (!hgaConfig.enabled) {
+      this.lastFetchMeta.hga_status = 'unknown';
+      if (this.hgaLastStatus === 'unknown' || !this.hgaLastMessage) {
+        this.setHgaRuntimeState('disabled', 'HGA 抓取已关闭，当前仅使用 Trade500 主链路');
+      }
+      return baseMatches;
+    }
+
+    if (!hgaConfig.username || !hgaConfig.password) {
+      this.lastFetchMeta.hga_status = 'failed';
+      this.setHgaRuntimeState('failed', 'HGA 账号或密码未配置，已跳过 HGA 抓取');
+      return baseMatches;
     }
 
     if (this.hgaRiskBlocked) {
       this.lastFetchMeta.hga_status = 'locked';
+      this.setHgaRuntimeState('locked', this.hgaLoginBlockedReason || 'HGA 已被上游风控锁定');
       console.warn(`HGA risk lock detected, skip HGA fetch: ${this.hgaLoginBlockedReason || 'locked by upstream'}`);
       const withPw = await this.tryPlaywrightFallback(baseMatches, 'hga-locked');
       if (withPw.length > 0) baseMatches = withPw;
@@ -533,10 +864,11 @@ export class CrawlerService {
     }
 
     try {
-      const hgaMatches = await this.withTimeout(this.fetchHgaMatches(), HGA_FETCH_TIMEOUT_MS, 'HGA fetch timeout');
+      const hgaMatches = await this.withTimeout(this.fetchHgaMatches(baseMatches), HGA_FETCH_TIMEOUT_MS, 'HGA fetch timeout');
       this.lastFetchMeta.hga_count = hgaMatches.length;
       if (hgaMatches.length === 0) {
         this.lastFetchMeta.hga_status = 'empty';
+        this.setHgaRuntimeState('empty', 'HGA 返回空数据，已回退到 Trade500 主链路');
         console.warn('HGA returned 0 matches, fallback to Trade500 primary source');
         const withPw = await this.tryPlaywrightFallback(baseMatches, 'hga-empty');
         if (withPw.length > 0) baseMatches = withPw;
@@ -547,6 +879,7 @@ export class CrawlerService {
       const merged = this.mergeHgaCrownData(baseMatches, hgaMatches);
       this.lastFetchMeta.hga_status = 'ok';
       this.lastFetchMeta.merged_count = merged.length;
+      this.setHgaRuntimeState('ok', `HGA 抓取成功，返回 ${hgaMatches.length} 场，合并后 ${merged.length} 场`);
       const strict = strictByHgaHandicapCount(merged);
       console.log(
         `HGA strict filter kept ${strict.length}/${merged.length} matches (requires ${REQUIRED_CROWN_HANDICAP_COUNT} crown handicaps)`
@@ -561,16 +894,51 @@ export class CrawlerService {
       if (errText.includes(HGA_ACCOUNT_LOCKED)) {
         this.lastFetchMeta.hga_status = 'locked';
         this.hgaRiskBlocked = true;
+        this.setHgaRuntimeState('locked', errText);
+      } else if (errText.includes(HGA_CREDENTIALS_INVALID)) {
+        this.lastFetchMeta.hga_status = 'failed';
+        this.disableHgaByCredentialFailure(
+          errText.replace(`${HGA_CREDENTIALS_INVALID}:`, '').trim() ||
+            '检测到 HGA 账号或密码错误，已自动关闭 HGA 抓取，请更新配置后手动重新开启'
+        );
       } else {
         this.lastFetchMeta.hga_status = errText.includes('timeout') ? 'timeout' : 'failed';
+        this.setHgaRuntimeState(errText.includes('timeout') ? 'timeout' : 'failed', errText || 'HGA 抓取失败');
       }
       console.warn(`HGA source failed, fallback to Trade500 primary source: ${err?.message || err}`);
+      if (this.lastFetchMeta.hga_status === 'timeout') {
+        const strictBase = strictByHgaHandicapCount(baseMatches);
+        console.warn(`Skip Playwright fallback on HGA timeout, keep Trade500 base result: ${strictBase.length}/${baseMatches.length} matches`);
+        return baseMatches;
+      }
       const withPw = await this.tryPlaywrightFallback(baseMatches, this.lastFetchMeta.hga_status === 'locked' ? 'hga-locked' : 'hga-failed');
       if (withPw.length > 0) baseMatches = withPw;
       const strictBase = strictByHgaHandicapCount(baseMatches);
       console.warn(`Trade500 strict fallback reference: ${strictBase.length}/${baseMatches.length} matches`);
       return baseMatches;
     }
+  }
+
+  private static getHgaConfig() {
+    const admin = db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as { id?: number } | undefined;
+    const adminId = admin?.id;
+    if (!adminId) {
+      return { enabled: false, username: '', password: '' };
+    }
+    const rows = db
+      .prepare(
+        "SELECT key, value FROM system_settings WHERE user_id = ? AND key IN ('hga_enabled', 'hga_username', 'hga_password')"
+      )
+      .all(adminId) as Array<{ key: string; value: string }>;
+    const map = rows.reduce<Record<string, string>>((acc, curr) => {
+      acc[curr.key] = curr.value;
+      return acc;
+    }, {});
+    return {
+      enabled: map.hga_enabled === 'true',
+      username: String(map.hga_username || '').trim(),
+      password: String(map.hga_password || '').trim(),
+    };
   }
 
   private static async tryPlaywrightFallback(baseMatches: ExternalMatch[], reason: string): Promise<ExternalMatch[]> {
@@ -669,6 +1037,7 @@ export class CrawlerService {
     if (tradeRows.length === 0) {
       return [];
     }
+    const hgaConfig = this.getHgaConfig();
 
     let crownMap = {
       byExact: new Map<string, { crownOdds: ExternalOdds; crownAsia: ExternalAsia }>(),
@@ -679,9 +1048,20 @@ export class CrawlerService {
     } catch (err: any) {
       console.warn(`Trade500 odds.xml enrichment failed, continue with empty crown odds: ${err?.message || err}`);
     }
+
+    let live500CrownMap = new Map<string, ExternalOdds>();
+    if (!hgaConfig.enabled) {
+      try {
+        const dates = Array.from(new Set(tradeRows.map((row) => row.date).filter(Boolean)));
+        live500CrownMap = await this.fetchLive500CrownOddsMap(dates);
+      } catch (err: any) {
+        console.warn(`live.500 crown fallback failed, continue with odds.xml only: ${err?.message || err}`);
+      }
+    }
     const out: ExternalMatch[] = tradeRows.map((row) => {
       const key = `${row.date}|${row.matchnum}`;
       const crown = crownMap.byExact.get(key) || crownMap.byMatchnum.get(row.matchnum);
+      const liveCrown = live500CrownMap.get(key) || live500CrownMap.get(row.matchnum);
       const standardOdds = row.odds;
       const handicapOdds = ((row as any).__handicapOdds || {}) as ExternalOdds;
       const regularHandicap = String((row as any).__regularHandicap || '').trim() || '0';
@@ -698,7 +1078,7 @@ export class CrawlerService {
         jingcaiHandicap,
         jingcaiOdds: standardOdds,
         jingcaiHandicapOdds: handicapOdds,
-        crownOdds: crown?.crownOdds || { win: '-', draw: '-', lose: '-' },
+        crownOdds: this.isValidExternalOdds(liveCrown) ? liveCrown! : crown?.crownOdds || { win: '-', draw: '-', lose: '-' },
         crownAsia: crown?.crownAsia || { handicap: '-', homeWater: '-', awayWater: '-' },
       };
     });
@@ -806,6 +1186,77 @@ export class CrawlerService {
     return { byExact, byMatchnum };
   }
 
+  private static async fetchLive500CrownOddsMap(dates: string[]) {
+    const fixtureMap = await this.fetchLive500FixtureMap(dates);
+    const exactEntries = Array.from(fixtureMap.byExact.entries());
+    const oddsMap = new Map<string, ExternalOdds>();
+    const queue = [...exactEntries];
+
+    const workers = new Array(Math.min(LIVE500_CROWN_FETCH_CONCURRENCY, Math.max(queue.length, 1))).fill(null).map(async () => {
+      while (queue.length > 0) {
+        const current = queue.shift();
+        if (!current) return;
+        const [key, fid] = current;
+        try {
+          const odds = await this.fetchLive500CrownOddsByFixture(fid);
+          if (!this.isValidExternalOdds(odds)) continue;
+          oddsMap.set(key, odds);
+          const matchnum = key.split('|')[1] || '';
+          if (matchnum && !oddsMap.has(matchnum)) {
+            oddsMap.set(matchnum, odds);
+          }
+        } catch (err: any) {
+          console.warn(`live.500 crown odds fetch failed for ${key} (${fid}): ${err?.message || err}`);
+        }
+      }
+    });
+
+    await Promise.all(workers);
+    console.log(`live.500 crown fallback fetched ${oddsMap.size} mapped odds entries`);
+    return oddsMap;
+  }
+
+  private static async fetchLive500FixtureMap(dates: string[]): Promise<Live500FixtureMap> {
+    const byExact = new Map<string, string>();
+    const byMatchnum = new Map<string, string>();
+    for (const date of dates) {
+      if (!date) continue;
+      const html = await this.fetchTextWithCheck(`${LIVE500_JCZQ_URL}?e=${date}`, 'gb18030');
+      const rowRegex = /<tr[^>]+order="(\d+)"[^>]+fid="(\d+)"[^>]*>/g;
+      let match: RegExpExecArray | null;
+      while ((match = rowRegex.exec(html)) !== null) {
+        const order = String(match[1] || '').trim();
+        const fid = String(match[2] || '').trim();
+        if (!order || !fid) continue;
+        byExact.set(`${date}|${order}`, fid);
+        if (!byMatchnum.has(order)) byMatchnum.set(order, fid);
+      }
+    }
+    return { byExact, byMatchnum };
+  }
+
+  private static async fetchLive500CrownOddsByFixture(fid: string): Promise<ExternalOdds | null> {
+    const html = await this.fetchTextWithCheck(`${ODDS500_OUZHI_URL}${fid}.shtml`, 'gb18030');
+    const rowPattern = new RegExp(
+      `<tr[^>]+id="${LIVE500_CROWN_COMPANY_ID}"[^>]*>[\\s\\S]*?<table[^>]*class="pl_table_data"[\\s\\S]*?<tbody>([\\s\\S]*?)<\\/tbody>[\\s\\S]*?<\\/table>`,
+      'i'
+    );
+    const tbody = html.match(rowPattern)?.[1] || '';
+    if (!tbody) return null;
+
+    const trMatches = [...tbody.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
+    const targetTr = trMatches[1]?.[1] || trMatches[0]?.[1] || '';
+    if (!targetTr) return null;
+
+    const values = [...targetTr.matchAll(/>\s*([0-9]+(?:\.[0-9]+)?)\s*</g)].map((item) => item[1]);
+    if (values.length < 3) return null;
+    return {
+      win: values[0],
+      draw: values[1],
+      lose: values[2],
+    };
+  }
+
   private static parseTrade500XmlRows(xml: string): Trade500XmlRow[] {
     const out: Trade500XmlRow[] = [];
     const matchRegex = /<m\s+([^>]+)>([\s\S]*?)<\/m>/g;
@@ -879,6 +1330,10 @@ export class CrawlerService {
       .replace(/&gt;/g, '>');
   }
 
+  private static isValidExternalOdds(odds?: ExternalOdds | null) {
+    return this.parseOdds(odds?.win) > 0 && this.parseOdds(odds?.draw) > 0 && this.parseOdds(odds?.lose) > 0;
+  }
+
   private static normalizeNumericHandicap(input?: string) {
     const text = String(input || '').trim();
     if (!text) return '';
@@ -896,7 +1351,7 @@ export class CrawlerService {
     return base;
   }
 
-  private static async fetchTextWithCheck(url: string) {
+  private static async fetchTextWithCheck(url: string, encoding: string = 'utf-8') {
     let lastErr: any = null;
     const cached = HTTP_TEXT_CACHE.get(url);
     for (let i = 0; i < 3; i++) {
@@ -928,7 +1383,8 @@ export class CrawlerService {
           lastErr = new Error(`request failed: ${response.status} ${url}`);
           continue;
         }
-        const text = await response.text();
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const text = new TextDecoder(encoding).decode(buffer);
         HTTP_TEXT_CACHE.set(url, {
           body: text,
           etag: response.headers.get('etag') || undefined,
@@ -1247,6 +1703,12 @@ export class CrawlerService {
     return Number.isFinite(v) ? sign * v : Number.POSITIVE_INFINITY;
   }
 
+  private static isZeroHandicapType(type?: string) {
+    const normalized = this.normalizeHandicapV2(type);
+    if (!normalized) return false;
+    return normalized.replace(/^[+-]/, '') === '0';
+  }
+
   private static inferHomeHandicapSign(match: ExternalMatch) {
     const homeWin = this.parseOdds(match.crownOdds?.win);
     const awayWin = this.parseOdds(match.crownOdds?.lose);
@@ -1309,17 +1771,24 @@ export class CrawlerService {
     return sign ? `${sign}${mapped}` : mapped;
   }
 
-  private static async fetchHgaMatches(): Promise<HgaMatch[]> {
-    const username = process.env.HGA_USERNAME || 'Boom8899';
-    const password = process.env.HGA_PASSWORD || 'Aabb112233';
-    const uid = await this.hgaLogin(username, password);
+  private static async fetchHgaMatches(targetMatches: ExternalMatch[] = []): Promise<HgaMatch[]> {
+    const { username, password } = this.getHgaConfig();
+    if (!username || !password) {
+      throw new Error('HGA 配置缺失');
+    }
+    let uid = await this.hgaLogin(username, password);
     if (!uid) throw new Error('HGA login failed');
 
-    const listXmls = await Promise.all([
-      this.fetchHgaGameListXml(uid, 'today', ''),
-      this.fetchHgaGameListXml(uid, 'early', 'all'),
-      this.fetchHgaGameListXml(uid, 'early', ''),
-    ]);
+    const todayResult = await this.fetchHgaGameListXmlWithRetry(uid, username, password, 'today', '');
+    uid = todayResult.uid;
+    await this.sleep(160);
+    const earlyAllResult = await this.fetchHgaGameListXmlWithRetry(uid, username, password, 'early', 'all');
+    uid = earlyAllResult.uid;
+    await this.sleep(160);
+    const earlyResult = await this.fetchHgaGameListXmlWithRetry(uid, username, password, 'early', '');
+    uid = earlyResult.uid;
+
+    const listXmls = [todayResult.xml, earlyAllResult.xml, earlyResult.xml];
 
     const all = [
       ...this.parseHgaGameList(listXmls[0], 'today'),
@@ -1335,7 +1804,10 @@ export class CrawlerService {
     }
     if (baseMatches.length === 0) return [];
 
-    const enriched = await this.enrichHgaHandicapsV2(uid, username, password, baseMatches);
+    const relevantMatches = targetMatches.length > 0 ? this.selectRelevantHgaMatches(targetMatches, baseMatches) : baseMatches;
+    if (relevantMatches.length === 0) return [];
+
+    const enriched = await this.enrichHgaHandicapsV2(uid, username, password, relevantMatches);
     return enriched;
   }
 
@@ -1365,6 +1837,27 @@ export class CrawlerService {
     } catch {
       return '';
     }
+  }
+
+  private static async fetchHgaGameListXmlWithRetry(
+    uid: string,
+    username: string,
+    password: string,
+    showtype: string,
+    date: string
+  ) {
+    let currentUid = uid;
+    let xml = await this.fetchHgaGameListXml(currentUid, showtype, date);
+    if (this.isHgaDoubleLoginXml(xml)) {
+      const nextUid = await this.hgaLogin(username, password);
+      if (!nextUid) {
+        throw new Error(`${HGA_DOUBLE_LOGIN}: relogin failed`);
+      }
+      currentUid = nextUid;
+      await this.sleep(160);
+      xml = await this.fetchHgaGameListXml(currentUid, showtype, date);
+    }
+    return { uid: currentUid, xml };
   }
 
   private static async hgaLogin(username: string, password: string): Promise<string | null> {
@@ -1405,6 +1898,11 @@ export class CrawlerService {
         this.hgaLoginBlockedReason = String(codeMessage);
         this.hgaRiskBlocked = true;
         throw new Error(`${HGA_ACCOUNT_LOCKED}: ${codeMessage}`);
+      }
+      if (this.isHgaCredentialError(String(codeMessage))) {
+        throw new Error(
+          `${HGA_CREDENTIALS_INVALID}: 检测到 HGA 账号或密码错误，已自动关闭 HGA 抓取，请更新配置后手动重新开启`
+        );
       }
       return null;
     }
@@ -1455,6 +1953,15 @@ export class CrawlerService {
       await new Promise((resolve) => setTimeout(resolve, 140 * (i + 1)));
     }
     throw lastErr || new Error('HGA request failed');
+  }
+
+  private static isHgaDoubleLoginXml(xml: string) {
+    const text = String(xml || '');
+    return text.includes('<msg>doubleLogin</msg>') || text.includes('doubleLogin');
+  }
+
+  private static sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private static parseHgaGameList(xml: string, sourceShowtype: 'today' | 'early'): HgaMatch[] {
@@ -1619,14 +2126,18 @@ export class CrawlerService {
             { showtype: 'early', isEarly: 'Y' },
             { showtype: 'parlay', isEarly: 'Y' },
           ];
-    const models: Array<'OU|MIX' | 'OU'> = ['OU|MIX', 'OU'];
-
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       try {
         for (const item of route) {
-          for (const model of models) {
-            const rows = await this.fetchHgaObtHandicaps(uid, match.ecid, match.strong, item.showtype, item.isEarly, model);
-            const merged = this.getValidCrownHandicaps([...(best || []), ...rows]);
+          const primaryRows = await this.fetchHgaObtHandicaps(uid, match.ecid, match.strong, item.showtype, item.isEarly, 'OU|MIX');
+          let merged = this.getValidCrownHandicaps([...(best || []), ...primaryRows]);
+          if (merged.length > best.length) best = merged;
+          if (best.length >= REQUIRED_CROWN_HANDICAP_COUNT) return best;
+
+          // `OU` 作为次级兜底，只在当前盘口仍不足时再补一轮，避免每个路由都翻倍请求量。
+          if (best.length < REQUIRED_CROWN_HANDICAP_COUNT) {
+            const fallbackRows = await this.fetchHgaObtHandicaps(uid, match.ecid, match.strong, item.showtype, item.isEarly, 'OU');
+            merged = this.getValidCrownHandicaps([...(best || []), ...fallbackRows]);
             if (merged.length > best.length) best = merged;
             if (best.length >= REQUIRED_CROWN_HANDICAP_COUNT) return best;
           }
@@ -1735,9 +2246,12 @@ export class CrawlerService {
   }
 
   private static normalizeNameForMatch(name?: string) {
-    return (name || '')
+    const lowered = (name || '')
       .toLowerCase()
-      .replace(/\s+/g, '')
+      .replace(/\s+/g, '');
+    const aliased = this.getHgaMappings().teamAliasMap[lowered] || lowered;
+    return aliased
+      .toLowerCase()
       .replace(/[^\p{L}\p{N}]/gu, '');
   }
 
@@ -1750,6 +2264,10 @@ export class CrawlerService {
       return true;
     }
     return false;
+  }
+
+  private static normalizeMatchPair(home?: string, away?: string) {
+    return `${this.normalizeNameForMatch(home)}|${this.normalizeNameForMatch(away)}`;
   }
 
   private static pickBestHgaCandidate(oldMatch: ExternalMatch, candidates: HgaMatch[]) {
@@ -1810,11 +2328,77 @@ export class CrawlerService {
     return best?.row || null;
   }
 
+  private static selectRelevantHgaMatches(targetMatches: ExternalMatch[], hgaMatches: HgaMatch[]) {
+    if (targetMatches.length === 0 || hgaMatches.length === 0) return hgaMatches;
+
+    const byPair = new Map<string, HgaMatch[]>();
+    for (const row of hgaMatches) {
+      const key = this.normalizeMatchPair(row.homeTeam, row.awayTeam);
+      if (!byPair.has(key)) byPair.set(key, []);
+      byPair.get(key)!.push(row);
+    }
+    for (const list of byPair.values()) {
+      list.sort((a, b) => a.matchTime.localeCompare(b.matchTime));
+    }
+
+    const selected: HgaMatch[] = [];
+    const seen = new Set<string>();
+    for (const match of targetMatches) {
+      const exactKey = this.normalizeMatchPair(match.homeTeam, match.awayTeam);
+      const strictCandidates = byPair.get(exactKey) || [];
+      const fallbackCandidates = strictCandidates.length
+        ? strictCandidates
+        : hgaMatches.filter(
+            (row) => this.teamNameLikelySame(row.homeTeam, match.homeTeam) && this.teamNameLikelySame(row.awayTeam, match.awayTeam)
+          );
+      const chosen = this.pickBestHgaCandidate(match, fallbackCandidates) || this.pickLikelyHgaCandidateByOdds(match, hgaMatches);
+      if (!chosen || seen.has(chosen.ecid)) continue;
+      seen.add(chosen.ecid);
+      selected.push(chosen);
+    }
+
+    console.log(`HGA candidate narrowing kept ${selected.length}/${hgaMatches.length} matches for ${targetMatches.length} base matches`);
+    return selected;
+  }
+
+  private static pickLikelyHgaCandidateByOdds(oldMatch: ExternalMatch, candidates: HgaMatch[]) {
+    const oldTime = this.normalizeMatchTime(oldMatch.matchTime);
+    const oldDate = oldTime.slice(0, 10);
+    const oldWin = this.parseOdds(oldMatch.crownOdds?.win);
+    const oldDraw = this.parseOdds(oldMatch.crownOdds?.draw);
+    const oldLose = this.parseOdds(oldMatch.crownOdds?.lose);
+    if (!(oldWin > 0 && oldDraw > 0 && oldLose > 0)) return null;
+
+    const ranked = candidates
+      .map((row) => {
+        const rowTime = this.normalizeMatchTime(row.matchTime);
+        const sameDate = rowTime.slice(0, 10) === oldDate;
+        if (!sameDate) return null;
+        const diff =
+          Math.abs(oldWin - row.crownOdds.win) +
+          Math.abs(oldDraw - row.crownOdds.draw) +
+          Math.abs(oldLose - row.crownOdds.lose);
+        return { row, diff };
+      })
+      .filter((item): item is { row: HgaMatch; diff: number } => Boolean(item))
+      .sort((a, b) => a.diff - b.diff);
+
+    const best = ranked[0];
+    const second = ranked[1];
+    if (!best) return null;
+
+    const clearlyBest = !second || second.diff - best.diff >= 0.08;
+    if (best.diff <= 0.14 && clearlyBest) {
+      return best.row;
+    }
+    return null;
+  }
+
   private static mergeHgaCrownData(legacyMatches: ExternalMatch[], hgaMatches: HgaMatch[]) {
     if (legacyMatches.length === 0) return legacyMatches;
     const byPair = new Map<string, HgaMatch[]>();
     for (const m of hgaMatches) {
-      const key = `${this.normalizeNameForMatch(m.homeTeam)}|${this.normalizeNameForMatch(m.awayTeam)}`;
+      const key = this.normalizeMatchPair(m.homeTeam, m.awayTeam);
       if (!byPair.has(key)) byPair.set(key, []);
       byPair.get(key)!.push(m);
     }
@@ -1824,7 +2408,7 @@ export class CrawlerService {
 
     let enriched = 0;
     const merged = legacyMatches.map((oldMatch) => {
-      const key = `${this.normalizeNameForMatch(oldMatch.homeTeam)}|${this.normalizeNameForMatch(oldMatch.awayTeam)}`;
+      const key = this.normalizeMatchPair(oldMatch.homeTeam, oldMatch.awayTeam);
       const strictCandidates = byPair.get(key) || [];
       const chosen =
         this.pickBestHgaCandidate(oldMatch, strictCandidates) ||
@@ -1851,23 +2435,6 @@ export class CrawlerService {
     });
     console.log(`HGA gray source enriched crown data for ${enriched}/${legacyMatches.length} matches`);
     return merged;
-  }
-
-  private static shouldOnlySyncCompleteMatches() {
-    const admin = db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as { id?: number } | undefined;
-    if (!admin?.id) {
-      return true;
-    }
-
-    const setting = db
-      .prepare("SELECT value FROM system_settings WHERE user_id = ? AND key = 'only_complete_matches'")
-      .get(admin.id) as { value?: string } | undefined;
-
-    if (!setting) {
-      return true;
-    }
-
-    return setting.value !== 'false';
   }
 
   private static isMatchComplete(match: ExternalMatch) {
@@ -1939,6 +2506,7 @@ export class CrawlerService {
     const baseTypes: ('jingcai' | 'crown')[] = ['jingcai', 'crown'];
 
     for (const baseType of baseTypes) {
+      await this.yieldToEventLoop();
       for (const m of matches as any) {
         const jcOdds = {
           W: m.j_w,
@@ -1981,6 +2549,7 @@ export class CrawlerService {
         }
       }
 
+      await this.yieldToEventLoop();
       const parlayOpportunities = ArbitrageEngine.findParlayOpportunities(
         10000,
         matches.map((m) => ({
@@ -1993,6 +2562,7 @@ export class CrawlerService {
         baseType
       );
 
+      await this.yieldToEventLoop();
       for (const p of parlayOpportunities) {
         db.prepare(`
           INSERT INTO parlay_opportunities (user_id, match_id_1, match_id_2, side_1, side_2, odds_1, odds_2, combined_odds, best_strategy, profit_rate, base_type)

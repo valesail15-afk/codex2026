@@ -6,6 +6,16 @@ import { randomBytes } from 'crypto';
 const dbPath = path.resolve(process.cwd(), 'arbitrage.db');
 const db = new Database(dbPath);
 
+export function formatLocalDbDateTime(date = new Date()) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mi = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+}
+
 // 初始化数据库表
 export function initDb() {
   // 迁移：处理 matches 表的架构变更 (移除 user_id 实现数据统一)
@@ -305,7 +315,6 @@ export function initDb() {
     
     const defaultSettings = [
       ['auto_scan', 'false'],
-      ['only_complete_matches', 'true'],
       ['sound_alert', 'false'],
       ['scan_interval', '90'],
       ['last_sync_at', '0'],
@@ -332,10 +341,6 @@ export function initDb() {
     }
   }
 
-  db.exec(`
-    INSERT OR IGNORE INTO system_settings (user_id, key, value)
-    SELECT id, 'only_complete_matches', 'true' FROM users
-  `);
   db.exec(`
     INSERT OR IGNORE INTO system_settings (user_id, key, value)
     SELECT id, 'last_sync_at', '0' FROM users

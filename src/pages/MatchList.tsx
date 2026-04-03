@@ -36,9 +36,11 @@ type MatchRow = {
 };
 
 type RefreshStatus = {
+  auto_scan_enabled?: boolean;
+  hga_enabled?: boolean;
   interval_seconds: number;
   last_sync_at: string | null;
-  next_sync_at: string;
+  next_sync_at: string | null;
   remaining_seconds: number;
   can_refresh: boolean;
 };
@@ -109,7 +111,10 @@ const renderJcOutcomeCell = (
   </Space>
 );
 
-const normalizeCrownHandicaps = (input?: CrownHandicap[] | CrownHandicap | string | null): CrownHandicap[] => {
+const normalizeCrownHandicaps = (
+  input?: CrownHandicap[] | CrownHandicap | string | null,
+  limit = 3
+): CrownHandicap[] => {
   const toNumber = (value: unknown) => {
     const n = Number(value);
     return Number.isFinite(n) ? n : 0;
@@ -143,15 +148,18 @@ const normalizeCrownHandicaps = (input?: CrownHandicap[] | CrownHandicap | strin
       const key = formatHandicapType(item.type);
       if (!uniq.has(key)) uniq.set(key, item);
     }
-    return Array.from(uniq.values()).slice(0, 3);
+    return Array.from(uniq.values()).slice(0, Math.max(1, limit));
   }
 
   const single = normalizeItem(parsed);
   return single ? [single] : [];
 };
 
-const formatCrownHandicap = (handicaps?: CrownHandicap[] | CrownHandicap | string | null) => {
-  const normalized = normalizeCrownHandicaps(handicaps);
+const formatCrownHandicap = (
+  handicaps?: CrownHandicap[] | CrownHandicap | string | null,
+  limit = 3
+) => {
+  const normalized = normalizeCrownHandicaps(handicaps, limit);
   if (normalized.length === 0) return '-';
   return (
     <div style={{ lineHeight: 1.45 }}>
@@ -185,6 +193,7 @@ const MatchList: React.FC = () => {
   const [editingMatch, setEditingMatch] = useState<MatchRow | null>(null);
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
+  const crownHandicapDisplayLimit = refreshStatus?.hga_enabled === true ? 3 : 1;
 
   const fetchMatches = async () => {
     setLoading(true);
@@ -332,7 +341,7 @@ const MatchList: React.FC = () => {
         key: 'c_h',
         width: 220,
         responsive: responsiveMd,
-        render: (value: CrownHandicap[] | CrownHandicap | string | null) => formatCrownHandicap(value),
+        render: (value: CrownHandicap[] | CrownHandicap | string | null) => formatCrownHandicap(value, crownHandicapDisplayLimit),
       },
       {
         title: '操作',
@@ -359,10 +368,12 @@ const MatchList: React.FC = () => {
           ),
       },
     ],
-    []
+    [crownHandicapDisplayLimit]
   );
 
-  const countdownText = `${Math.max(0, remainingSeconds ?? refreshStatus?.interval_seconds ?? 0)}秒后同步数据`;
+  const countdownText = refreshStatus?.auto_scan_enabled === false
+    ? '自动同步已关闭'
+    : `${Math.max(0, remainingSeconds ?? refreshStatus?.interval_seconds ?? 0)}秒后同步数据`;
 
   return (
     <div style={{ maxWidth: 1560, margin: '0 auto' }}>

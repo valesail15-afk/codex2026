@@ -1,0 +1,2572 @@
+﻿[
+    {
+        "id":  10265,
+        "match_id":  "2026-04-03|5001",
+        "league":  "澳大利亚超级联赛",
+        "round":  "5001",
+        "handicap":  "0",
+        "home_team":  "阿德莱德联",
+        "away_team":  "奥克兰FC",
+        "match_time":  "2026-04-03 16:35:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  2.4,
+        "j_d":  3.6,
+        "j_l":  2.3,
+        "j_hw":  1.47,
+        "j_hd":  4.2,
+        "j_hl":  4.75,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.56,
+        "c_d":  3.8,
+        "c_l":  2.5,
+        "c_h":  [
+                    {
+                        "type":  "+0",
+                        "home_odds":  0.94,
+                        "away_odds":  0.94
+                    },
+                    {
+                        "type":  "+0/0.5",
+                        "home_odds":  0.8,
+                        "away_odds":  1.08
+                    },
+                    {
+                        "type":  "+0.5",
+                        "home_odds":  0.63,
+                        "away_odds":  1.25
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10266,
+        "match_id":  "2026-04-03|5002",
+        "league":  "英格兰冠军联赛",
+        "round":  "5002",
+        "handicap":  "0",
+        "home_team":  "米德尔斯堡",
+        "away_team":  "米尔沃尔",
+        "match_time":  "2026-04-03 19:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.55,
+        "j_d":  3.8,
+        "j_l":  4.52,
+        "j_hw":  2.74,
+        "j_hd":  3.45,
+        "j_hl":  2.11,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.64,
+        "c_d":  3.85,
+        "c_l":  4.65,
+        "c_h":  [
+                    {
+                        "type":  "-1",
+                        "home_odds":  1.19,
+                        "away_odds":  0.69
+                    },
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  0.8,
+                        "away_odds":  1.08
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  0.71,
+                        "away_odds":  1.17
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10267,
+        "match_id":  "2026-04-03|5003",
+        "league":  "英格兰冠军联赛",
+        "round":  "5003",
+        "handicap":  "0",
+        "home_team":  "伯明翰",
+        "away_team":  "布莱克本",
+        "match_time":  "2026-04-03 22:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.67,
+        "j_d":  3.25,
+        "j_l":  4.5,
+        "j_hw":  3.27,
+        "j_hd":  3.22,
+        "j_hl":  1.95,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.86,
+        "c_d":  3.4,
+        "c_l":  4,
+        "c_h":  [
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  1.14,
+                        "away_odds":  0.74
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  0.86,
+                        "away_odds":  1.02
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.64,
+                        "away_odds":  1.24
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10268,
+        "match_id":  "2026-04-03|5004",
+        "league":  "英格兰冠军联赛",
+        "round":  "5004",
+        "handicap":  "0",
+        "home_team":  "女王公园巡游者",
+        "away_team":  "沃特福德",
+        "match_time":  "2026-04-03 22:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  2.55,
+        "j_d":  3.08,
+        "j_l":  2.43,
+        "j_hw":  1.42,
+        "j_hd":  4.1,
+        "j_hl":  5.5,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.46,
+        "c_d":  3.2,
+        "c_l":  2.64,
+        "c_h":  [
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.84,
+                        "away_odds":  1.04
+                    },
+                    {
+                        "type":  "+0",
+                        "home_odds":  0.88,
+                        "away_odds":  1
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10269,
+        "match_id":  "2026-04-03|5005",
+        "league":  "英格兰冠军联赛",
+        "round":  "5005",
+        "handicap":  "0",
+        "home_team":  "诺维奇",
+        "away_team":  "朴次茅斯",
+        "match_time":  "2026-04-03 22:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.8,
+        "j_d":  3.22,
+        "j_l":  3.8,
+        "j_hw":  3.52,
+        "j_hd":  3.45,
+        "j_hl":  1.8,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.96,
+        "c_d":  3.45,
+        "c_l":  3.6,
+        "c_h":  [
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  1.2,
+                        "away_odds":  0.68
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  0.97,
+                        "away_odds":  0.91
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.69,
+                        "away_odds":  1.19
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10270,
+        "match_id":  "2026-04-03|5006",
+        "league":  "英格兰冠军联赛",
+        "round":  "5006",
+        "handicap":  "0",
+        "home_team":  "西布罗姆维奇",
+        "away_team":  "雷克斯汉姆",
+        "match_time":  "2026-04-03 22:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.95,
+        "j_d":  3.1,
+        "j_l":  3.4,
+        "j_hw":  4,
+        "j_hd":  3.66,
+        "j_hl":  1.65,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.12,
+        "c_d":  3.35,
+        "c_l":  3.25,
+        "c_h":  [
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.85,
+                        "away_odds":  1.03
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10271,
+        "match_id":  "2026-04-04|5007",
+        "league":  "沙特职业联赛",
+        "round":  "5007",
+        "handicap":  "0",
+        "home_team":  "吉达联合",
+        "away_team":  "拉斯决心",
+        "match_time":  "2026-04-04 00:15:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.18,
+        "j_d":  5.62,
+        "j_l":  9.6,
+        "j_hw":  1.66,
+        "j_hd":  3.8,
+        "j_hl":  3.8,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.3,
+        "c_d":  5.2,
+        "c_l":  6.9,
+        "c_h":  [
+                    {
+                        "type":  "-1.5",
+                        "home_odds":  0.9,
+                        "away_odds":  0.92
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10272,
+        "match_id":  "2026-04-04|5008",
+        "league":  "法国乙级联赛",
+        "round":  "5008",
+        "handicap":  "0",
+        "home_team":  "圣旺红星",
+        "away_team":  "拉瓦勒",
+        "match_time":  "2026-04-04 02:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.62,
+        "j_d":  3.25,
+        "j_l":  4.9,
+        "j_hw":  3.3,
+        "j_hd":  3.1,
+        "j_hl":  1.99,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.65,
+        "c_d":  3.4,
+        "c_l":  4.5,
+        "c_h":  [
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  0.98,
+                        "away_odds":  0.9
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  0.7,
+                        "away_odds":  0.94
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10273,
+        "match_id":  "2026-04-04|5009",
+        "league":  "荷兰乙级联赛",
+        "round":  "5009",
+        "handicap":  "0",
+        "home_team":  "多德勒支",
+        "away_team":  "罗达JC",
+        "match_time":  "2026-04-04 02:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.11,
+        "j_d":  3.47,
+        "j_l":  2.72,
+        "j_hw":  4.18,
+        "j_hd":  3.95,
+        "j_hl":  1.57,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.2,
+        "c_d":  3.65,
+        "c_l":  2.68,
+        "c_h":  [
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  1.06,
+                        "away_odds":  0.82
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10274,
+        "match_id":  "2026-04-04|5010",
+        "league":  "法国甲级联赛",
+        "round":  "5010",
+        "handicap":  "0",
+        "home_team":  "巴黎圣日尔曼",
+        "away_team":  "图卢兹",
+        "match_time":  "2026-04-04 02:45:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-2",
+        "jc_handicap":  "-2",
+        "j_w":  1.15,
+        "j_d":  5.85,
+        "j_l":  11.25,
+        "j_hw":  2.62,
+        "j_hd":  3.92,
+        "j_hl":  2.03,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.3,
+        "c_d":  5.7,
+        "c_l":  9.3,
+        "c_h":  [
+                    {
+                        "type":  "-1.5/2",
+                        "home_odds":  0.98,
+                        "away_odds":  0.91
+                    },
+                    {
+                        "type":  "-1.5",
+                        "home_odds":  0.75,
+                        "away_odds":  0.89
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10275,
+        "match_id":  "2026-04-04|5011",
+        "league":  "英格兰冠军联赛",
+        "round":  "5011",
+        "handicap":  "0",
+        "home_team":  "考文垂",
+        "away_team":  "德比郡",
+        "match_time":  "2026-04-04 03:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.5,
+        "j_d":  3.85,
+        "j_l":  4.95,
+        "j_hw":  2.55,
+        "j_hd":  3.42,
+        "j_hl":  2.25,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.58,
+        "c_d":  4.15,
+        "c_l":  4.9,
+        "c_h":  [
+                    {
+                        "type":  "-1",
+                        "home_odds":  0.94,
+                        "away_odds":  0.71
+                    },
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  0.85,
+                        "away_odds":  1.03
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  0.65,
+                        "away_odds":  1.23
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10276,
+        "match_id":  "2026-04-04|5012",
+        "league":  "西班牙甲级联赛",
+        "round":  "5012",
+        "handicap":  "0",
+        "home_team":  "巴列卡诺",
+        "away_team":  "埃尔切",
+        "match_time":  "2026-04-04 03:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.64,
+        "j_d":  3.5,
+        "j_l":  4.27,
+        "j_hw":  3.02,
+        "j_hd":  3.4,
+        "j_hl":  1.99,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.73,
+        "c_d":  3.75,
+        "c_l":  4.95,
+        "c_h":  [
+                    {
+                        "type":  "-1",
+                        "home_odds":  1.28,
+                        "away_odds":  0.6
+                    },
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  0.94,
+                        "away_odds":  0.95
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  0.7,
+                        "away_odds":  0.93
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10277,
+        "match_id":  "2026-04-04|5013",
+        "league":  "葡萄牙超级联赛",
+        "round":  "5013",
+        "handicap":  "0",
+        "home_team":  "里斯本竞技",
+        "away_team":  "圣克拉拉",
+        "match_time":  "2026-04-04 03:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-2",
+        "jc_handicap":  "-2",
+        "j_w":  1.16,
+        "j_d":  5.35,
+        "j_l":  12.5,
+        "j_hw":  2.96,
+        "j_hd":  3.86,
+        "j_hl":  1.88,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.24,
+        "c_d":  5.4,
+        "c_l":  11,
+        "c_h":  [
+                    {
+                        "type":  "-1.5/2",
+                        "home_odds":  1.11,
+                        "away_odds":  0.79
+                    },
+                    {
+                        "type":  "-1.5",
+                        "home_odds":  0.92,
+                        "away_odds":  0.97
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10278,
+        "match_id":  "2026-04-04|6001",
+        "league":  "韩国职业联赛",
+        "round":  "6001",
+        "handicap":  "0",
+        "home_team":  "全北现代",
+        "away_team":  "蔚山现代",
+        "match_time":  "2026-04-04 13:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.07,
+        "j_d":  3.15,
+        "j_l":  3.04,
+        "j_hw":  4.28,
+        "j_hd":  3.75,
+        "j_hl":  1.59,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.14,
+        "c_d":  3.3,
+        "c_l":  3.2,
+        "c_h":  [
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  1.29,
+                        "away_odds":  0.59
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1.12,
+                        "away_odds":  0.76
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.86,
+                        "away_odds":  1.02
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10279,
+        "match_id":  "2026-04-04|6002",
+        "league":  "澳大利亚超级联赛",
+        "round":  "6002",
+        "handicap":  "0",
+        "home_team":  "中央海岸水手",
+        "away_team":  "珀斯光荣",
+        "match_time":  "2026-04-04 14:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.29,
+        "j_d":  3.4,
+        "j_l":  2.51,
+        "j_hw":  4.86,
+        "j_hd":  4.1,
+        "j_hl":  1.47,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.37,
+        "c_d":  3.8,
+        "c_l":  2.75,
+        "c_h":  [
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.83,
+                        "away_odds":  1.05
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10280,
+        "match_id":  "2026-04-04|6003",
+        "league":  "日本职业联赛",
+        "round":  "6003",
+        "handicap":  "0",
+        "home_team":  "大阪钢巴",
+        "away_team":  "京都不死鸟",
+        "match_time":  "2026-04-04 15:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.25,
+        "j_d":  3.34,
+        "j_l":  2.6,
+        "j_hw":  4.9,
+        "j_hd":  4,
+        "j_hl":  1.48,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.32,
+        "c_d":  3.7,
+        "c_l":  2.88,
+        "c_h":  [
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1.23,
+                        "away_odds":  0.65
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  1.04,
+                        "away_odds":  0.84
+                    },
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.75,
+                        "away_odds":  1.13
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10281,
+        "match_id":  "2026-04-04|6004",
+        "league":  "韩国职业联赛",
+        "round":  "6004",
+        "handicap":  "0",
+        "home_team":  "江原FC",
+        "away_team":  "光州FC",
+        "match_time":  "2026-04-04 15:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.47,
+        "j_d":  3.46,
+        "j_l":  6.25,
+        "j_hw":  2.76,
+        "j_hd":  3.05,
+        "j_hl":  2.28,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.65,
+        "c_d":  3.5,
+        "c_l":  5.2,
+        "c_h":  [
+                    {
+                        "type":  "-1",
+                        "home_odds":  1.19,
+                        "away_odds":  0.69
+                    },
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  0.85,
+                        "away_odds":  1.03
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  0.67,
+                        "away_odds":  1.21
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10282,
+        "match_id":  "2026-04-04|6005",
+        "league":  "澳大利亚超级联赛",
+        "round":  "6005",
+        "handicap":  "0",
+        "home_team":  "墨尔本城",
+        "away_team":  "西悉尼漫步者",
+        "match_time":  "2026-04-04 16:35:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.76,
+        "j_d":  3.6,
+        "j_l":  3.53,
+        "j_hw":  3.32,
+        "j_hd":  3.6,
+        "j_hl":  1.82,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.99,
+        "c_d":  3.8,
+        "c_l":  3.45,
+        "c_h":  [
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  1.22,
+                        "away_odds":  0.66
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  0.98,
+                        "away_odds":  0.9
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.74,
+                        "away_odds":  1.14
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10283,
+        "match_id":  "2026-04-04|6007",
+        "league":  "德国乙级联赛",
+        "round":  "6007",
+        "handicap":  "0",
+        "home_team":  "比勒费尔德",
+        "away_team":  "达姆施塔特",
+        "match_time":  "2026-04-04 19:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.22,
+        "j_d":  3.45,
+        "j_l":  2.57,
+        "j_hw":  4.66,
+        "j_hd":  4.1,
+        "j_hl":  1.49,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.26,
+        "c_d":  3.75,
+        "c_l":  2.7,
+        "c_h":  [
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1.23,
+                        "away_odds":  0.65
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  1.03,
+                        "away_odds":  0.85
+                    },
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.75,
+                        "away_odds":  1.13
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10284,
+        "match_id":  "2026-04-04|6008",
+        "league":  "英格兰足总杯",
+        "round":  "6008",
+        "handicap":  "0",
+        "home_team":  "曼彻斯特城",
+        "away_team":  "利物浦",
+        "match_time":  "2026-04-04 19:45:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.63,
+        "j_d":  3.85,
+        "j_l":  3.9,
+        "j_hw":  2.76,
+        "j_hd":  3.75,
+        "j_hl":  2,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.77,
+        "c_d":  4.25,
+        "c_l":  4,
+        "c_h":  [
+                    {
+                        "type":  "-1",
+                        "home_odds":  1.23,
+                        "away_odds":  0.65
+                    },
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  0.98,
+                        "away_odds":  0.9
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  0.77,
+                        "away_odds":  1.11
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10285,
+        "match_id":  "2026-04-04|6009",
+        "league":  "西班牙甲级联赛",
+        "round":  "6009",
+        "handicap":  "0",
+        "home_team":  "皇家社会",
+        "away_team":  "莱万特",
+        "match_time":  "2026-04-04 20:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.43,
+        "j_d":  4.05,
+        "j_l":  5.45,
+        "j_hw":  2.45,
+        "j_hd":  3.3,
+        "j_hl":  2.4,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.58,
+        "c_d":  4.4,
+        "c_l":  5.5,
+        "c_h":  [
+                    {
+                        "type":  "-1/1.5",
+                        "home_odds":  1.24,
+                        "away_odds":  0.64
+                    },
+                    {
+                        "type":  "-1",
+                        "home_odds":  1.03,
+                        "away_odds":  0.85
+                    },
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  0.71,
+                        "away_odds":  0.93
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10286,
+        "match_id":  "2026-04-04|6010",
+        "league":  "意大利甲级联赛",
+        "round":  "6010",
+        "handicap":  "0",
+        "home_team":  "萨索洛",
+        "away_team":  "卡利亚里",
+        "match_time":  "2026-04-04 21:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.74,
+        "j_d":  3.2,
+        "j_l":  4.15,
+        "j_hw":  3.5,
+        "j_hd":  3.35,
+        "j_hl":  1.84,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2,
+        "c_d":  3.25,
+        "c_l":  4.25,
+        "c_h":  [
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  1.21,
+                        "away_odds":  0.67
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1,
+                        "away_odds":  0.88
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.72,
+                        "away_odds":  1.16
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10287,
+        "match_id":  "2026-04-04|6012",
+        "league":  "德国甲级联赛",
+        "round":  "6012",
+        "handicap":  "0",
+        "home_team":  "门兴格拉德巴赫",
+        "away_team":  "海登海姆",
+        "match_time":  "2026-04-04 21:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.46,
+        "j_d":  4.05,
+        "j_l":  5.05,
+        "j_hw":  2.47,
+        "j_hd":  3.45,
+        "j_hl":  2.3,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.56,
+        "c_d":  4.6,
+        "c_l":  5.4,
+        "c_h":  [
+                    {
+                        "type":  "-1/1.5",
+                        "home_odds":  1.19,
+                        "away_odds":  0.69
+                    },
+                    {
+                        "type":  "-1",
+                        "home_odds":  0.95,
+                        "away_odds":  0.93
+                    },
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  0.72,
+                        "away_odds":  1.16
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10288,
+        "match_id":  "2026-04-04|6013",
+        "league":  "德国甲级联赛",
+        "round":  "6013",
+        "handicap":  "0",
+        "home_team":  "云达不来梅",
+        "away_team":  "莱比锡红牛",
+        "match_time":  "2026-04-04 21:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  3.53,
+        "j_d":  3.77,
+        "j_l":  1.72,
+        "j_hw":  1.86,
+        "j_hd":  3.75,
+        "j_hl":  3.08,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  3.45,
+        "c_d":  4.05,
+        "c_l":  1.96,
+        "c_h":  [
+                    {
+                        "type":  "+0",
+                        "home_odds":  1.38,
+                        "away_odds":  0.5
+                    },
+                    {
+                        "type":  "+0/0.5",
+                        "home_odds":  1.17,
+                        "away_odds":  0.71
+                    },
+                    {
+                        "type":  "+0.5",
+                        "home_odds":  0.92,
+                        "away_odds":  0.96
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10289,
+        "match_id":  "2026-04-04|6014",
+        "league":  "德国甲级联赛",
+        "round":  "6014",
+        "handicap":  "0",
+        "home_team":  "弗赖堡",
+        "away_team":  "拜仁慕尼黑",
+        "match_time":  "2026-04-04 21:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  6.25,
+        "j_d":  5.15,
+        "j_l":  1.29,
+        "j_hw":  2.95,
+        "j_hd":  3.95,
+        "j_hl":  1.86,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  6.6,
+        "c_d":  5.5,
+        "c_l":  1.41,
+        "c_h":  [
+                    {
+                        "type":  "+1",
+                        "home_odds":  1.29,
+                        "away_odds":  0.59
+                    },
+                    {
+                        "type":  "+1/1.5",
+                        "home_odds":  1.07,
+                        "away_odds":  0.81
+                    },
+                    {
+                        "type":  "+1.5",
+                        "home_odds":  0.86,
+                        "away_odds":  1.02
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10290,
+        "match_id":  "2026-04-04|6015",
+        "league":  "德国甲级联赛",
+        "round":  "6015",
+        "handicap":  "0",
+        "home_team":  "勒沃库森",
+        "away_team":  "沃尔夫斯堡",
+        "match_time":  "2026-04-04 21:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.33,
+        "j_d":  4.75,
+        "j_l":  6,
+        "j_hw":  2.01,
+        "j_hd":  3.73,
+        "j_hl":  2.75,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.42,
+        "c_d":  5.2,
+        "c_l":  6.4,
+        "c_h":  [
+                    {
+                        "type":  "-1.5/2",
+                        "home_odds":  1.28,
+                        "away_odds":  0.6
+                    },
+                    {
+                        "type":  "-1.5",
+                        "home_odds":  1.11,
+                        "away_odds":  0.77
+                    },
+                    {
+                        "type":  "-1/1.5",
+                        "home_odds":  0.9,
+                        "away_odds":  0.98
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10291,
+        "match_id":  "2026-04-04|6016",
+        "league":  "德国甲级联赛",
+        "round":  "6016",
+        "handicap":  "0",
+        "home_team":  "霍芬海姆",
+        "away_team":  "美因茨",
+        "match_time":  "2026-04-04 21:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.58,
+        "j_d":  3.9,
+        "j_l":  4.16,
+        "j_hw":  2.74,
+        "j_hd":  3.55,
+        "j_hl":  2.07,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.76,
+        "c_d":  4.2,
+        "c_l":  4.2,
+        "c_h":  [
+                    {
+                        "type":  "-1/1.5",
+                        "home_odds":  1.31,
+                        "away_odds":  0.57
+                    },
+                    {
+                        "type":  "-1",
+                        "home_odds":  1.16,
+                        "away_odds":  0.72
+                    },
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  0.9,
+                        "away_odds":  0.98
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10292,
+        "match_id":  "2026-04-04|6017",
+        "league":  "德国甲级联赛",
+        "round":  "6017",
+        "handicap":  "0",
+        "home_team":  "汉堡",
+        "away_team":  "奥格斯堡",
+        "match_time":  "2026-04-04 21:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.98,
+        "j_d":  3.31,
+        "j_l":  3.1,
+        "j_hw":  4.1,
+        "j_hd":  3.73,
+        "j_hl":  1.62,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.26,
+        "c_d":  3.6,
+        "c_l":  3.15,
+        "c_h":  [
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.96,
+                        "away_odds":  0.92
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10293,
+        "match_id":  "2026-04-04|6018",
+        "league":  "西班牙甲级联赛",
+        "round":  "6018",
+        "handicap":  "0",
+        "home_team":  "马洛卡",
+        "away_team":  "皇家马德里",
+        "match_time":  "2026-04-04 22:15:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  5.2,
+        "j_d":  4.2,
+        "j_l":  1.43,
+        "j_hw":  2.4,
+        "j_hd":  3.5,
+        "j_hl":  2.35,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  5.3,
+        "c_d":  4.5,
+        "c_l":  1.58,
+        "c_h":  [
+                    {
+                        "type":  "+0.5",
+                        "home_odds":  1.3,
+                        "away_odds":  0.58
+                    },
+                    {
+                        "type":  "+0.5/1",
+                        "home_odds":  1.16,
+                        "away_odds":  0.72
+                    },
+                    {
+                        "type":  "+1",
+                        "home_odds":  0.92,
+                        "away_odds":  0.96
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10294,
+        "match_id":  "2026-04-04|6019",
+        "league":  "荷兰甲级联赛",
+        "round":  "6019",
+        "handicap":  "0",
+        "home_team":  "PSV埃因霍温",
+        "away_team":  "乌德勒支",
+        "match_time":  "2026-04-04 22:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.37,
+        "j_d":  4.55,
+        "j_l":  5.58,
+        "j_hw":  2.12,
+        "j_hd":  3.8,
+        "j_hl":  2.54,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.52,
+        "c_d":  4.85,
+        "c_l":  5.3,
+        "c_h":  [
+                    {
+                        "type":  "-1.5",
+                        "home_odds":  1.23,
+                        "away_odds":  0.65
+                    },
+                    {
+                        "type":  "-1/1.5",
+                        "home_odds":  1.04,
+                        "away_odds":  0.84
+                    },
+                    {
+                        "type":  "-1",
+                        "home_odds":  0.8,
+                        "away_odds":  1.08
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10295,
+        "match_id":  "2026-04-05|6020",
+        "league":  "意大利甲级联赛",
+        "round":  "6020",
+        "handicap":  "0",
+        "home_team":  "维罗纳",
+        "away_team":  "佛罗伦萨",
+        "match_time":  "2026-04-05 00:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  3.7,
+        "j_d":  3.15,
+        "j_l":  1.85,
+        "j_hw":  1.73,
+        "j_hd":  3.4,
+        "j_hl":  3.9,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  3.9,
+        "c_d":  3.6,
+        "c_l":  1.97,
+        "c_h":  [
+                    {
+                        "type":  "+0/0.5",
+                        "home_odds":  1.19,
+                        "away_odds":  0.69
+                    },
+                    {
+                        "type":  "+0.5",
+                        "home_odds":  0.94,
+                        "away_odds":  0.94
+                    },
+                    {
+                        "type":  "+0.5/1",
+                        "home_odds":  0.7,
+                        "away_odds":  1.18
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10296,
+        "match_id":  "2026-04-05|6022",
+        "league":  "德国甲级联赛",
+        "round":  "6022",
+        "handicap":  "0",
+        "home_team":  "斯图加特",
+        "away_team":  "多特蒙德",
+        "match_time":  "2026-04-05 00:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.09,
+        "j_d":  3.7,
+        "j_l":  2.63,
+        "j_hw":  4.13,
+        "j_hd":  4.13,
+        "j_hl":  1.55,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.37,
+        "c_d":  4.1,
+        "c_l":  2.67,
+        "c_h":  [
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1.23,
+                        "away_odds":  0.65
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  1.05,
+                        "away_odds":  0.83
+                    },
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.78,
+                        "away_odds":  1.1
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10297,
+        "match_id":  "2026-04-05|6023",
+        "league":  "西班牙甲级联赛",
+        "round":  "6023",
+        "handicap":  "0",
+        "home_team":  "皇家贝蒂斯",
+        "away_team":  "西班牙人",
+        "match_time":  "2026-04-05 00:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.57,
+        "j_d":  3.7,
+        "j_l":  4.5,
+        "j_hw":  2.9,
+        "j_hd":  3.3,
+        "j_hl":  2.08,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.72,
+        "c_d":  3.95,
+        "c_l":  4.85,
+        "c_h":  [
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  0.93,
+                        "away_odds":  0.95
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10298,
+        "match_id":  "2026-04-05|6025",
+        "league":  "意大利甲级联赛",
+        "round":  "6025",
+        "handicap":  "0",
+        "home_team":  "拉齐奥",
+        "away_team":  "帕尔马",
+        "match_time":  "2026-04-05 02:45:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.63,
+        "j_d":  3.25,
+        "j_l":  4.8,
+        "j_hw":  3.25,
+        "j_hd":  3.2,
+        "j_hl":  1.97,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.82,
+        "c_d":  3.6,
+        "c_l":  4.7,
+        "c_h":  [
+                    {
+                        "type":  "-1",
+                        "home_odds":  1.3,
+                        "away_odds":  0.58
+                    },
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  1.02,
+                        "away_odds":  0.86
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  0.72,
+                        "away_odds":  0.92
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10299,
+        "match_id":  "2026-04-05|6026",
+        "league":  "英格兰足总杯",
+        "round":  "6026",
+        "handicap":  "0",
+        "home_team":  "南安普敦",
+        "away_team":  "阿森纳",
+        "match_time":  "2026-04-05 03:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  7.6,
+        "j_d":  5.05,
+        "j_l":  1.25,
+        "j_hw":  3.16,
+        "j_hd":  3.75,
+        "j_hl":  1.83,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  8.9,
+        "c_d":  5.7,
+        "c_l":  1.31,
+        "c_h":  [
+                    {
+                        "type":  "+1/1.5",
+                        "home_odds":  1.25,
+                        "away_odds":  0.63
+                    },
+                    {
+                        "type":  "+1.5",
+                        "home_odds":  1.03,
+                        "away_odds":  0.85
+                    },
+                    {
+                        "type":  "+1.5/2",
+                        "home_odds":  0.84,
+                        "away_odds":  1.04
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10300,
+        "match_id":  "2026-04-05|6027",
+        "league":  "西班牙甲级联赛",
+        "round":  "6027",
+        "handicap":  "0",
+        "home_team":  "马德里竞技",
+        "away_team":  "巴塞罗那",
+        "match_time":  "2026-04-05 03:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  2.8,
+        "j_d":  3.75,
+        "j_l":  1.98,
+        "j_hw":  1.63,
+        "j_hd":  4.05,
+        "j_hl":  3.75,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  3.1,
+        "c_d":  3.85,
+        "c_l":  2.19,
+        "c_h":  [
+                    {
+                        "type":  "+0",
+                        "home_odds":  1.24,
+                        "away_odds":  0.64
+                    },
+                    {
+                        "type":  "+0/0.5",
+                        "home_odds":  0.97,
+                        "away_odds":  0.91
+                    },
+                    {
+                        "type":  "+0.5",
+                        "home_odds":  0.76,
+                        "away_odds":  1.12
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10301,
+        "match_id":  "2026-04-05|6028",
+        "league":  "法国甲级联赛",
+        "round":  "6028",
+        "handicap":  "0",
+        "home_team":  "里尔",
+        "away_team":  "朗斯",
+        "match_time":  "2026-04-05 03:05:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  2.65,
+        "j_d":  3.3,
+        "j_l":  2.23,
+        "j_hw":  1.49,
+        "j_hd":  4.05,
+        "j_hl":  4.75,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.53,
+        "c_d":  3.45,
+        "c_l":  2.69,
+        "c_h":  [
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.96,
+                        "away_odds":  0.92
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10302,
+        "match_id":  "2026-04-05|6029",
+        "league":  "葡萄牙超级联赛",
+        "round":  "6029",
+        "handicap":  "0",
+        "home_team":  "波尔图",
+        "away_team":  "法马利康",
+        "match_time":  "2026-04-05 03:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.32,
+        "j_d":  4.22,
+        "j_l":  7.4,
+        "j_hw":  2.13,
+        "j_hd":  3.35,
+        "j_hl":  2.77,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.39,
+        "c_d":  4.45,
+        "c_l":  7.4,
+        "c_h":  [
+                    {
+                        "type":  "-1/1.5",
+                        "home_odds":  0.97,
+                        "away_odds":  0.91
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10303,
+        "match_id":  "2026-04-05|7001",
+        "league":  "澳大利亚超级联赛",
+        "round":  "7001",
+        "handicap":  "0",
+        "home_team":  "墨尔本胜利",
+        "away_team":  "惠灵顿凤凰",
+        "match_time":  "2026-04-05 13:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.41,
+        "j_d":  4.35,
+        "j_l":  5.25,
+        "j_hw":  2.25,
+        "j_hd":  3.65,
+        "j_hl":  2.43,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.56,
+        "c_d":  4.65,
+        "c_l":  5.1,
+        "c_h":  [
+                    {
+                        "type":  "-1/1.5",
+                        "home_odds":  1.15,
+                        "away_odds":  0.73
+                    },
+                    {
+                        "type":  "-1",
+                        "home_odds":  0.92,
+                        "away_odds":  0.96
+                    },
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  0.7,
+                        "away_odds":  1.18
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10304,
+        "match_id":  "2026-04-05|7002",
+        "league":  "韩国职业联赛",
+        "round":  "7002",
+        "handicap":  "0",
+        "home_team":  "安养FC",
+        "away_team":  "首尔FC",
+        "match_time":  "2026-04-05 13:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  3.68,
+        "j_d":  3.1,
+        "j_l":  1.87,
+        "j_hw":  1.71,
+        "j_hd":  3.4,
+        "j_hl":  4,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  3.2,
+        "c_d":  3.3,
+        "c_l":  2.13,
+        "c_h":  [
+                    {
+                        "type":  "+0",
+                        "home_odds":  1.33,
+                        "away_odds":  0.55
+                    },
+                    {
+                        "type":  "+0/0.5",
+                        "home_odds":  1.04,
+                        "away_odds":  0.84
+                    },
+                    {
+                        "type":  "+0.5",
+                        "home_odds":  0.76,
+                        "away_odds":  1.12
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10305,
+        "match_id":  "2026-04-05|7003",
+        "league":  "日本职业联赛",
+        "round":  "7003",
+        "handicap":  "0",
+        "home_team":  "东京FC",
+        "away_team":  "町田泽维亚",
+        "match_time":  "2026-04-05 14:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.27,
+        "j_d":  3.08,
+        "j_l":  2.75,
+        "j_hw":  5.25,
+        "j_hd":  3.8,
+        "j_hl":  1.48,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.26,
+        "c_d":  3.5,
+        "c_l":  3.1,
+        "c_h":  [
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1.28,
+                        "away_odds":  0.6
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  1.05,
+                        "away_odds":  0.83
+                    },
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.74,
+                        "away_odds":  1.14
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10306,
+        "match_id":  "2026-04-05|7004",
+        "league":  "日本职业联赛",
+        "round":  "7004",
+        "handicap":  "0",
+        "home_team":  "川崎前锋",
+        "away_team":  "浦和红钻",
+        "match_time":  "2026-04-05 15:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  2.48,
+        "j_d":  3.4,
+        "j_l":  2.32,
+        "j_hw":  1.45,
+        "j_hd":  4.05,
+        "j_hl":  5.2,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.53,
+        "c_d":  3.6,
+        "c_l":  2.59,
+        "c_h":  [
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.92,
+                        "away_odds":  0.96
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10307,
+        "match_id":  "2026-04-05|7005",
+        "league":  "韩国职业联赛",
+        "round":  "7005",
+        "handicap":  "0",
+        "home_team":  "仁川联",
+        "away_team":  "金泉尚武",
+        "match_time":  "2026-04-05 15:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.35,
+        "j_d":  2.96,
+        "j_l":  2.73,
+        "j_hw":  5.65,
+        "j_hd":  3.75,
+        "j_hl":  1.46,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.23,
+        "c_d":  3.35,
+        "c_l":  3,
+        "c_h":  [
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1.26,
+                        "away_odds":  0.62
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  1.09,
+                        "away_odds":  0.79
+                    },
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.71,
+                        "away_odds":  1.17
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10308,
+        "match_id":  "2026-04-05|7006",
+        "league":  "荷兰甲级联赛",
+        "round":  "7006",
+        "handicap":  "0",
+        "home_team":  "前进之鹰",
+        "away_team":  "兹沃勒",
+        "match_time":  "2026-04-05 18:15:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.83,
+        "j_d":  3.6,
+        "j_l":  3.28,
+        "j_hw":  3.4,
+        "j_hd":  3.8,
+        "j_hl":  1.75,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.06,
+        "c_d":  3.75,
+        "c_l":  3.3,
+        "c_h":  [
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  1.24,
+                        "away_odds":  0.64
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  0.92,
+                        "away_odds":  0.73
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.8,
+                        "away_odds":  1.08
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10309,
+        "match_id":  "2026-04-05|7007",
+        "league":  "德国乙级联赛",
+        "round":  "7007",
+        "handicap":  "0",
+        "home_team":  "汉诺威96",
+        "away_team":  "埃尔沃斯堡",
+        "match_time":  "2026-04-05 19:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.15,
+        "j_d":  3.43,
+        "j_l":  2.68,
+        "j_hw":  4.45,
+        "j_hd":  4.05,
+        "j_hl":  1.52,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.17,
+        "c_d":  3.7,
+        "c_l":  2.86,
+        "c_h":  [
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1.18,
+                        "away_odds":  0.7
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.93,
+                        "away_odds":  0.95
+                    },
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.67,
+                        "away_odds":  1.21
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10310,
+        "match_id":  "2026-04-05|7008",
+        "league":  "德国乙级联赛",
+        "round":  "7008",
+        "handicap":  "0",
+        "home_team":  "菲尔特",
+        "away_team":  "帕德博恩",
+        "match_time":  "2026-04-05 19:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  3.9,
+        "j_d":  3.75,
+        "j_l":  1.65,
+        "j_hw":  1.95,
+        "j_hd":  3.56,
+        "j_hl":  2.98,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  3.6,
+        "c_d":  3.7,
+        "c_l":  1.89,
+        "c_h":  [
+                    {
+                        "type":  "+0/0.5",
+                        "home_odds":  1.22,
+                        "away_odds":  0.66
+                    },
+                    {
+                        "type":  "+0.5",
+                        "home_odds":  0.99,
+                        "away_odds":  0.89
+                    },
+                    {
+                        "type":  "+0.5/1",
+                        "home_odds":  0.76,
+                        "away_odds":  1.12
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10311,
+        "match_id":  "2026-04-05|7009",
+        "league":  "西班牙甲级联赛",
+        "round":  "7009",
+        "handicap":  "0",
+        "home_team":  "赫塔费",
+        "away_team":  "毕尔巴鄂竞技",
+        "match_time":  "2026-04-05 20:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  2.9,
+        "j_d":  2.6,
+        "j_l":  2.5,
+        "j_hw":  1.4,
+        "j_hd":  3.8,
+        "j_hl":  6.6,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  3.15,
+        "c_d":  2.86,
+        "c_l":  2.66,
+        "c_h":  [
+                    {
+                        "type":  "+0",
+                        "home_odds":  1.08,
+                        "away_odds":  0.8
+                    },
+                    {
+                        "type":  "+0/0.5",
+                        "home_odds":  0.7,
+                        "away_odds":  1.18
+                    },
+                    {
+                        "type":  "+0.5",
+                        "home_odds":  0.51,
+                        "away_odds":  1.37
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10312,
+        "match_id":  "2026-04-05|7011",
+        "league":  "荷兰甲级联赛",
+        "round":  "7011",
+        "handicap":  "0",
+        "home_team":  "福伦丹",
+        "away_team":  "费耶诺德",
+        "match_time":  "2026-04-05 20:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  6.55,
+        "j_d":  4.82,
+        "j_l":  1.3,
+        "j_hw":  2.86,
+        "j_hd":  3.9,
+        "j_hl":  1.91,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  5.8,
+        "c_d":  5.1,
+        "c_l":  1.46,
+        "c_h":  [
+                    {
+                        "type":  "+1/1.5",
+                        "home_odds":  0.93,
+                        "away_odds":  0.95
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10313,
+        "match_id":  "2026-04-05|7012",
+        "league":  "意大利甲级联赛",
+        "round":  "7012",
+        "handicap":  "0",
+        "home_team":  "克雷莫纳",
+        "away_team":  "博洛尼亚",
+        "match_time":  "2026-04-05 21:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  3.55,
+        "j_d":  3.25,
+        "j_l":  1.85,
+        "j_hw":  1.73,
+        "j_hd":  3.45,
+        "j_hl":  3.85,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  3.65,
+        "c_d":  3.5,
+        "c_l":  2.08,
+        "c_h":  [
+                    {
+                        "type":  "+0",
+                        "home_odds":  1.36,
+                        "away_odds":  0.52
+                    },
+                    {
+                        "type":  "+0/0.5",
+                        "home_odds":  1.07,
+                        "away_odds":  0.81
+                    },
+                    {
+                        "type":  "+0.5",
+                        "home_odds":  0.8,
+                        "away_odds":  1.08
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10314,
+        "match_id":  "2026-04-05|7013",
+        "league":  "法国甲级联赛",
+        "round":  "7013",
+        "handicap":  "0",
+        "home_team":  "昂热",
+        "away_team":  "里昂",
+        "match_time":  "2026-04-05 21:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  4.35,
+        "j_d":  3.25,
+        "j_l":  1.69,
+        "j_hw":  1.91,
+        "j_hd":  3.25,
+        "j_hl":  3.35,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  4.55,
+        "c_d":  3.7,
+        "c_l":  1.79,
+        "c_h":  [
+                    {
+                        "type":  "+0/0.5",
+                        "home_odds":  1.29,
+                        "away_odds":  0.59
+                    },
+                    {
+                        "type":  "+0.5",
+                        "home_odds":  1.06,
+                        "away_odds":  0.82
+                    },
+                    {
+                        "type":  "+0.5/1",
+                        "home_odds":  0.81,
+                        "away_odds":  1.07
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10315,
+        "match_id":  "2026-04-05|7014",
+        "league":  "德国甲级联赛",
+        "round":  "7014",
+        "handicap":  "0",
+        "home_team":  "柏林联合",
+        "away_team":  "圣保利",
+        "match_time":  "2026-04-05 21:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.91,
+        "j_d":  2.9,
+        "j_l":  3.83,
+        "j_hw":  4.3,
+        "j_hd":  3.35,
+        "j_hl":  1.67,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.14,
+        "c_d":  3.35,
+        "c_l":  3.65,
+        "c_h":  [
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  1.32,
+                        "away_odds":  0.56
+                    },
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1.11,
+                        "away_odds":  0.77
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.84,
+                        "away_odds":  1.04
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10316,
+        "match_id":  "2026-04-05|7015",
+        "league":  "西班牙甲级联赛",
+        "round":  "7015",
+        "handicap":  "0",
+        "home_team":  "巴伦西亚",
+        "away_team":  "维戈塞尔塔",
+        "match_time":  "2026-04-05 22:15:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.35,
+        "j_d":  3,
+        "j_l":  2.7,
+        "j_hw":  5.5,
+        "j_hd":  3.9,
+        "j_hl":  1.45,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.29,
+        "c_d":  3.25,
+        "c_l":  3.35,
+        "c_h":  [
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1.23,
+                        "away_odds":  0.65
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  1,
+                        "away_odds":  0.88
+                    },
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.65,
+                        "away_odds":  1.23
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10317,
+        "match_id":  "2026-04-05|7017",
+        "league":  "荷兰甲级联赛",
+        "round":  "7017",
+        "handicap":  "0",
+        "home_team":  "布雷达",
+        "away_team":  "鹿特丹斯巴达",
+        "match_time":  "2026-04-05 22:45:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.3,
+        "j_d":  3.25,
+        "j_l":  2.59,
+        "j_hw":  5,
+        "j_hd":  4.1,
+        "j_hl":  1.46,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.46,
+        "c_d":  3.5,
+        "c_l":  2.8,
+        "c_h":  [
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.84,
+                        "away_odds":  1.04
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10318,
+        "match_id":  "2026-04-05|7018",
+        "league":  "法国甲级联赛",
+        "round":  "7018",
+        "handicap":  "0",
+        "home_team":  "洛里昂",
+        "away_team":  "巴黎FC",
+        "match_time":  "2026-04-05 23:15:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.09,
+        "j_d":  3.1,
+        "j_l":  3.05,
+        "j_hw":  4.6,
+        "j_hd":  3.65,
+        "j_hl":  1.57,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.23,
+        "c_d":  3.5,
+        "c_l":  3.2,
+        "c_h":  [
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.97,
+                        "away_odds":  0.91
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10319,
+        "match_id":  "2026-04-05|7019",
+        "league":  "英格兰足总杯",
+        "round":  "7019",
+        "handicap":  "0",
+        "home_team":  "西汉姆联",
+        "away_team":  "利兹联",
+        "match_time":  "2026-04-05 23:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.28,
+        "j_d":  3.2,
+        "j_l":  2.65,
+        "j_hw":  5.1,
+        "j_hd":  3.95,
+        "j_hl":  1.47,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.42,
+        "c_d":  3.75,
+        "c_l":  2.72,
+        "c_h":  [
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.83,
+                        "away_odds":  1.05
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10320,
+        "match_id":  "2026-04-05|7020",
+        "league":  "德国甲级联赛",
+        "round":  "7020",
+        "handicap":  "0",
+        "home_team":  "法兰克福",
+        "away_team":  "科隆",
+        "match_time":  "2026-04-05 23:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.85,
+        "j_d":  3.5,
+        "j_l":  3.3,
+        "j_hw":  3.56,
+        "j_hd":  3.7,
+        "j_hl":  1.73,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.16,
+        "c_d":  3.6,
+        "c_l":  3.3,
+        "c_h":  [
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1.04,
+                        "away_odds":  0.84
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.75,
+                        "away_odds":  0.88
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10321,
+        "match_id":  "2026-04-06|7021",
+        "league":  "意大利甲级联赛",
+        "round":  "7021",
+        "handicap":  "0",
+        "home_team":  "比萨",
+        "away_team":  "都灵",
+        "match_time":  "2026-04-06 00:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "+1",
+        "jc_handicap":  "+1",
+        "j_w":  2.88,
+        "j_d":  3,
+        "j_l":  2.23,
+        "j_hw":  1.49,
+        "j_hd":  3.7,
+        "j_hl":  5.35,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  3.25,
+        "c_d":  2.96,
+        "c_l":  2.42,
+        "c_h":  [
+                    {
+                        "type":  "+0/0.5",
+                        "home_odds":  0.8,
+                        "away_odds":  1.08
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10322,
+        "match_id":  "2026-04-06|7022",
+        "league":  "西班牙甲级联赛",
+        "round":  "7022",
+        "handicap":  "0",
+        "home_team":  "皇家奥维耶多",
+        "away_team":  "塞维利亚",
+        "match_time":  "2026-04-06 00:30:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.52,
+        "j_d":  2.85,
+        "j_l":  2.62,
+        "j_hw":  6.3,
+        "j_hd":  4,
+        "j_hl":  1.39,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  3.05,
+        "c_d":  2.96,
+        "c_l":  2.68,
+        "c_h":  [
+                    {
+                        "type":  "+0",
+                        "home_odds":  1,
+                        "away_odds":  0.88
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10323,
+        "match_id":  "2026-04-06|7024",
+        "league":  "意大利甲级联赛",
+        "round":  "7024",
+        "handicap":  "0",
+        "home_team":  "国际米兰",
+        "away_team":  "罗马",
+        "match_time":  "2026-04-06 02:45:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.48,
+        "j_d":  3.75,
+        "j_l":  5.35,
+        "j_hw":  2.62,
+        "j_hd":  3.25,
+        "j_hl":  2.28,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  1.64,
+        "c_d":  4.05,
+        "c_l":  5.2,
+        "c_h":  [
+                    {
+                        "type":  "-1/1.5",
+                        "home_odds":  1.31,
+                        "away_odds":  0.57
+                    },
+                    {
+                        "type":  "-1",
+                        "home_odds":  1.12,
+                        "away_odds":  0.76
+                    },
+                    {
+                        "type":  "-0.5/1",
+                        "home_odds":  0.83,
+                        "away_odds":  1.05
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10324,
+        "match_id":  "2026-04-06|7025",
+        "league":  "法国甲级联赛",
+        "round":  "7025",
+        "handicap":  "0",
+        "home_team":  "摩纳哥",
+        "away_team":  "马赛",
+        "match_time":  "2026-04-06 02:45:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  1.93,
+        "j_d":  3.65,
+        "j_l":  2.96,
+        "j_hw":  3.65,
+        "j_hd":  3.9,
+        "j_hl":  1.67,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.16,
+        "c_d":  3.85,
+        "c_l":  3.05,
+        "c_h":  [
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1.13,
+                        "away_odds":  0.75
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  0.89,
+                        "away_odds":  0.99
+                    },
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.65,
+                        "away_odds":  1.23
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    },
+    {
+        "id":  10325,
+        "match_id":  "2026-04-06|7026",
+        "league":  "西班牙甲级联赛",
+        "round":  "7026",
+        "handicap":  "0",
+        "home_team":  "阿拉维斯",
+        "away_team":  "奥萨苏纳",
+        "match_time":  "2026-04-06 03:00:00",
+        "status":  "upcoming",
+        "created_at":  "2026-04-03 12:53:22",
+        "updated_at":  "2026-04-03 12:53:22",
+        "jingcai_handicap":  "-1",
+        "jc_handicap":  "-1",
+        "j_w":  2.45,
+        "j_d":  3,
+        "j_l":  2.58,
+        "j_hw":  5.8,
+        "j_hd":  4.05,
+        "j_hl":  1.41,
+        "j_r":  0.13,
+        "j_s":  0,
+        "c_w":  2.49,
+        "c_d":  3.15,
+        "c_l":  3.1,
+        "c_h":  [
+                    {
+                        "type":  "-0.5",
+                        "home_odds":  1.33,
+                        "away_odds":  0.55
+                    },
+                    {
+                        "type":  "-0/0.5",
+                        "home_odds":  1.12,
+                        "away_odds":  0.77
+                    },
+                    {
+                        "type":  "-0",
+                        "home_odds":  0.68,
+                        "away_odds":  0.99
+                    }
+                ],
+        "c_r":  0.02,
+        "c_s":  0
+    }
+]
