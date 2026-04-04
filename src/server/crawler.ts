@@ -527,8 +527,6 @@ export class CrawlerService {
 
     db.transaction(() => {
       const nowText = formatLocalDbDateTime();
-      db.prepare('DELETE FROM arbitrage_opportunities').run();
-      db.prepare('DELETE FROM parlay_opportunities').run();
       db.prepare("DELETE FROM crown_odds WHERE match_id NOT LIKE 'manual_%'").run();
       db.prepare("DELETE FROM jingcai_odds WHERE match_id NOT LIKE 'manual_%'").run();
       db.prepare("DELETE FROM matches WHERE match_id NOT LIKE 'manual_%'").run();
@@ -717,6 +715,9 @@ export class CrawlerService {
 
   private static buildHandicapsWithFallback(match: ExternalMatch, existingMap: Map<string, ExternalHandicap[]>) {
     const latest = this.buildHandicaps(match);
+    if (this.getHgaConfig().enabled) {
+      return latest.slice(0, REQUIRED_CROWN_HANDICAP_COUNT);
+    }
     if (latest.length >= REQUIRED_CROWN_HANDICAP_COUNT) return latest.slice(0, REQUIRED_CROWN_HANDICAP_COUNT);
     const old = existingMap.get(match.id) || [];
     return this.mergeHandicapCandidates(latest, old, { preferPrimaryZero: true });
@@ -2500,40 +2501,46 @@ export class CrawlerService {
       WHERE m.status = 'upcoming'
     `).all();
 
-    db.prepare('DELETE FROM arbitrage_opportunities WHERE user_id = ?').run(userId);
-    db.prepare('DELETE FROM parlay_opportunities WHERE user_id = ?').run(userId);
+    const baseTypesSingle: ('jingcai' | 'crown' | 'hg')[] = ['jingcai', 'crown', 'hg'];
+    const baseTypesParlay: ('jingcai' | 'crown')[] = ['jingcai', 'crown'];
+    const matchRows = matches.map((m: any) => ({
+      ...m,
+      j_r: jcRebate,
+      j_s: jcShare,
+      c_r: crownRebate,
+      c_s: crownShare,
+    }));
 
-    const baseTypes: ('jingcai' | 'crown')[] = ['jingcai', 'crown'];
-
-    for (const baseType of baseTypes) {
+    for (const baseType of baseTypesSingle) {
       await this.yieldToEventLoop();
-      for (const m of matches as any) {
-        const jcOdds = {
-          W: m.j_w,
-          D: m.j_d,
-          L: m.j_l,
-          HW: m.j_hw,
-          HD: m.j_hd,
-          HL: m.j_hl,
-          handicapLine: m.jc_handicap,
-          rebate: Number.isFinite(Number(m.j_r)) ? Number(m.j_r) : jcRebate,
-          share: Number.isFinite(Number(m.j_s)) ? Number(m.j_s) : jcShare
-        };
-        const crownOdds = {
-          W: m.c_w,
-          D: m.c_d,
-          L: m.c_l,
-          handicaps: m.c_h ? JSON.parse(m.c_h) : [],
-          rebate: Number.isFinite(Number(m.c_r)) ? Number(m.c_r) : crownRebate,
-          share: Number.isFinite(Number(m.c_s)) ? Number(m.c_s) : crownShare,
-        };
+      try {
+        db.prepare('DELETE FROM arbitrage_opportunities WHERE user_id = ? AND base_type = ?').run(userId, baseType);
+        for (const m of matchRows as any) {
+          const jcOdds = {
+            W: m.j_w,
+            D: m.j_d,
+            L: m.j_l,
+            HW: m.j_hw,
+            HD: m.j_hd,
+            HL: m.j_hl,
+            handicapLine: m.jc_handicap,
+            rebate: jcRebate,
+            share: jcShare,
+          };
+          const crownOdds = {
+            W: m.c_w,
+            D: m.c_d,
+            L: m.c_l,
+            handicaps: m.c_h ? JSON.parse(m.c_h) : [],
+            rebate: crownRebate,
+            share: crownShare,
+          };
 
-        const opportunities = ArbitrageEngine.findAllOpportunities(10000, jcOdds, crownOdds, baseType);
+          const opportunities = ArbitrageEngine.findAllOpportunities(10000, jcOdds, crownOdds, baseType);
+          if (opportunities.length === 0) continue;
 
-        if (opportunities.length > 0) {
           const best = opportunities[0];
           const jcSide = best.jcSide || 'W';
-
           db.prepare(`
             INSERT INTO arbitrage_opportunities (user_id, match_id, jingcai_side, jingcai_odds, best_strategy, profit_rate, base_type)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -2547,39 +2554,40 @@ export class CrawlerService {
             baseType
           );
         }
+      } catch (err) {
+        console.error(`[scanOpportunities] single(${baseType}) failed for user ${userId}:`, err);
       }
 
       await this.yieldToEventLoop();
-      const parlayOpportunities = ArbitrageEngine.findParlayOpportunities(
-        10000,
-        matches.map((m) => ({
-          ...m,
-          j_r: jcRebate,
-          j_s: jcShare,
-          c_r: crownRebate,
-          c_s: crownShare,
-        })),
-        baseType
-      );
+    }
 
+    for (const baseType of baseTypesParlay) {
       await this.yieldToEventLoop();
-      for (const p of parlayOpportunities) {
-        db.prepare(`
-          INSERT INTO parlay_opportunities (user_id, match_id_1, match_id_2, side_1, side_2, odds_1, odds_2, combined_odds, best_strategy, profit_rate, base_type)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          userId,
-          p.match_id_1,
-          p.match_id_2,
-          p.side_1,
-          p.side_2,
-          p.odds_1,
-          p.odds_2,
-          p.combined_odds,
-          JSON.stringify(p.best_strategy),
-          p.profit_rate,
-          baseType
-        );
+      try {
+        db.prepare('DELETE FROM parlay_opportunities WHERE user_id = ? AND base_type = ?').run(userId, baseType);
+        const parlayOpportunities = ArbitrageEngine.findParlayOpportunities(10000, matchRows, baseType);
+
+        await this.yieldToEventLoop();
+        for (const p of parlayOpportunities) {
+          db.prepare(`
+            INSERT INTO parlay_opportunities (user_id, match_id_1, match_id_2, side_1, side_2, odds_1, odds_2, combined_odds, best_strategy, profit_rate, base_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            userId,
+            p.match_id_1,
+            p.match_id_2,
+            p.side_1,
+            p.side_2,
+            p.odds_1,
+            p.odds_2,
+            p.combined_odds,
+            JSON.stringify(p.best_strategy),
+            p.profit_rate,
+            baseType
+          );
+        }
+      } catch (err) {
+        console.error(`[scanOpportunities] parlay(${baseType}) failed for user ${userId}:`, err);
       }
     }
 

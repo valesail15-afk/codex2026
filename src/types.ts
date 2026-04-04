@@ -64,6 +64,7 @@ export interface HedgeStrategy {
   jc_market?: 'normal' | 'handicap';
   jc_odds?: number;
   jc_label?: string;
+  hg_base_bet?: CrownBet;
   crown_bets: CrownBet[];
   profits: {
     win: number;

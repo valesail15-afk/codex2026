@@ -61,18 +61,36 @@ export class ArbitrageEngine {
   }
 
   private static parseBetType(type: string): { kind: 'std' | 'ah'; side: 'home' | 'away' | 'draw'; handicap?: number } {
-    const t = String(type || '').trim();
-    if (t.includes('标准胜') || t.includes('鏍囧噯鑳')) return { kind: 'std', side: 'home' };
-    if (t.includes('标准平') || t.includes('鏍囧噯骞')) return { kind: 'std', side: 'draw' };
-    if (t.includes('标准负') || t.includes('鏍囧噯璐')) return { kind: 'std', side: 'away' };
-    const m = t.match(/^(主胜|客胜|涓昏儨|瀹㈣儨)\(([^)]+)\)$/);
-    if (m) {
+    const t = String(type || '').replace(/\s+/g, '').trim();
+    const upper = t.toUpperCase();
+
+    if (upper === 'STD_HOME') return { kind: 'std', side: 'home' };
+    if (upper === 'STD_DRAW') return { kind: 'std', side: 'draw' };
+    if (upper === 'STD_AWAY') return { kind: 'std', side: 'away' };
+
+    const ah = upper.match(/^AH_(HOME|DRAW|AWAY)\(([^)]+)\)$/);
+    if (ah) {
       return {
         kind: 'ah',
-        side: m[1] === '主胜' || m[1] === '涓昏儨' ? 'home' : 'away',
-        handicap: this.parseHandicap(m[2]),
+        side: ah[1] === 'HOME' ? 'home' : ah[1] === 'DRAW' ? 'draw' : 'away',
+        handicap: this.parseHandicap(ah[2]),
       };
     }
+
+    // fallback: detect generic text labels
+    if (upper.includes('HOME')) return { kind: 'std', side: 'home' };
+    if (upper.includes('DRAW')) return { kind: 'std', side: 'draw' };
+    if (upper.includes('AWAY')) return { kind: 'std', side: 'away' };
+
+    const m = t.match(/^(.*?)\(([^)]+)\)$/);
+    if (m) {
+      const head = String(m[1] || '').toUpperCase();
+      const handicap = this.parseHandicap(m[2]);
+      if (head.includes('DRAW')) return { kind: 'ah', side: 'draw', handicap };
+      if (head.includes('AWAY')) return { kind: 'ah', side: 'away', handicap };
+      return { kind: 'ah', side: 'home', handicap };
+    }
+
     return { kind: 'std', side: 'home' };
   }
 
@@ -130,16 +148,16 @@ export class ArbitrageEngine {
 
   private static getCrownOptions(m: any): { type: string; odds: number }[] {
     const options: { type: string; odds: number }[] = [
-      { type: '标准胜', odds: Number(m.c_w || 0) },
-      { type: '标准平', odds: Number(m.c_d || 0) },
-      { type: '标准负', odds: Number(m.c_l || 0) },
+      { type: 'STD_HOME', odds: Number(m.c_w || 0) },
+      { type: 'STD_DRAW', odds: Number(m.c_d || 0) },
+      { type: 'STD_AWAY', odds: Number(m.c_l || 0) },
     ];
     const handicaps = m.c_h ? JSON.parse(m.c_h) : [];
     handicaps.forEach((h: any) => {
       const ht = String(h.type || '');
       const awayType = ht.startsWith('+') ? ht.replace('+', '-') : ht.startsWith('-') ? ht.replace('-', '+') : `-${ht}`;
-      options.push({ type: `主胜(${ht})`, odds: Number(h.home_odds || 0) });
-      options.push({ type: `客胜(${awayType})`, odds: Number(h.away_odds || 0) });
+      options.push({ type: `AH_HOME(${ht})`, odds: Number(h.home_odds || 0) });
+      options.push({ type: `AH_AWAY(${awayType})`, odds: Number(h.away_odds || 0) });
     });
     return options.filter((o) => this.isFinitePositive(o.odds));
   }
@@ -155,7 +173,7 @@ export class ArbitrageEngine {
     crownOptions: { type: string; odds: number }[],
     crownRebate: number,
     crownShare: number,
-    baseType: 'jingcai' | 'crown'
+    baseType: 'jingcai' | 'crown' | 'hg'
   ): HedgeStrategy | null {
     if (!this.isFinitePositive(jcOdds - 1, 1e-6)) return null;
     const C = A;
@@ -266,7 +284,7 @@ export class ArbitrageEngine {
     crownOptions: { type: string; odds: number }[],
     crownRebate: number,
     crownShare: number,
-    baseType: 'jingcai' | 'crown',
+    baseType: 'jingcai' | 'crown' | 'hg',
     integerUnit: number = 10000
   ): HedgeStrategy | null {
     if (!this.isFinitePositive(jcOdds - 1, 1e-6)) return null;
@@ -374,9 +392,12 @@ export class ArbitrageEngine {
     A: number,
     jcOdds: { W: number; D: number; L: number; HW?: number; HD?: number; HL?: number; handicapLine?: string; rebate: number; share: number },
     crownOdds: { W: number; D: number; L: number; handicaps: Handicap[]; rebate: number; share: number },
-    baseType: 'jingcai' | 'crown' = 'jingcai',
+    baseType: 'jingcai' | 'crown' | 'hg' = 'jingcai',
     integerUnit: number = 10000
   ): HedgeStrategy[] {
+    if (baseType === 'hg') {
+      return this.findAllHgOpportunities(A, crownOdds, integerUnit);
+    }
     const markets: Array<{ side: Side; odds: number; market: MarketType; label: string }> = [
       { side: 'W', odds: Number(jcOdds.W || 0), market: 'normal', label: '普通胜' },
       { side: 'D', odds: Number(jcOdds.D || 0), market: 'normal', label: '普通平' },
@@ -387,9 +408,9 @@ export class ArbitrageEngine {
     if (Number(jcOdds.HL || 0) > 1) markets.push({ side: 'L', odds: Number(jcOdds.HL), market: 'handicap', label: `让负(${jcOdds.handicapLine || '0'})` });
 
     const crownOptions: { type: string; odds: number }[] = [
-      { type: '标准胜', odds: Number(crownOdds.W || 0) },
-      { type: '标准平', odds: Number(crownOdds.D || 0) },
-      { type: '标准负', odds: Number(crownOdds.L || 0) },
+      { type: 'STD_HOME', odds: Number(crownOdds.W || 0) },
+      { type: 'STD_DRAW', odds: Number(crownOdds.D || 0) },
+      { type: 'STD_AWAY', odds: Number(crownOdds.L || 0) },
     ];
     (crownOdds.handicaps || []).forEach((h) => {
       const awayType = String(h.type).startsWith('+')
@@ -397,8 +418,8 @@ export class ArbitrageEngine {
         : String(h.type).startsWith('-')
         ? String(h.type).replace('-', '+')
         : `-${h.type}`;
-      crownOptions.push({ type: `主胜(${h.type})`, odds: Number(h.home_odds || 0) });
-      crownOptions.push({ type: `客胜(${awayType})`, odds: Number(h.away_odds || 0) });
+      crownOptions.push({ type: `AH_HOME(${h.type})`, odds: Number(h.home_odds || 0) });
+      crownOptions.push({ type: `AH_AWAY(${awayType})`, odds: Number(h.away_odds || 0) });
     });
 
     const out: HedgeStrategy[] = [];
@@ -425,6 +446,157 @@ export class ArbitrageEngine {
       s.jc_market = m.market;
       s.jc_odds = m.odds;
       s.jc_label = m.label;
+      out.push(s);
+    }
+    return out
+      .filter((o) => o.min_profit > 0.01 && o.min_profit_rate > 0.0001)
+      .sort((a, b) => {
+        if (Math.abs(b.min_profit_rate - a.min_profit_rate) > 1e-12) return b.min_profit_rate - a.min_profit_rate;
+        return b.min_profit - a.min_profit;
+      });
+  }
+
+  private static calculateGuaranteedHgLP(
+    A: number,
+    base: { type: string; odds: number },
+    crownOptions: { type: string; odds: number }[],
+    crownRebate: number,
+    crownShare: number
+  ): HedgeStrategy | null {
+    if (!this.isFinitePositive(base.odds, 1e-6)) return null;
+    const C = A;
+    const fineBuckets: Array<{ key: string; dgs: number[] }> = [
+      { key: 'hw2p', dgs: [2, 3, 4] },
+      { key: 'hw1', dgs: [1] },
+      { key: 'draw', dgs: [0] },
+      { key: 'aw1', dgs: [-1] },
+      { key: 'aw2p', dgs: [-2, -3, -4] },
+    ];
+
+    // HG 口径：标准盘中奖返还系数=odds；让球盘中奖返还系数=1+odds
+    const getHgReturnCoefficient = (type: string, odds: number, dg: number) => {
+      const bet = this.parseBetType(type);
+      if (bet.kind === 'std') {
+        if (bet.side === 'home') return dg > 0 ? odds : 0;
+        if (bet.side === 'draw') return dg === 0 ? odds : 0;
+        return dg < 0 ? odds : 0;
+      }
+      const score = bet.side === 'home' ? dg + (bet.handicap || 0) : -dg + (bet.handicap || 0);
+      if (score >= 0.5) return 1 + odds;
+      if (score === 0.25) return 1 + odds * 0.5;
+      if (score === 0) return 1;
+      if (score === -0.25) return 0.5;
+      return 0;
+    };
+
+    const model: any = { optimize: 'z', opType: 'max', constraints: {}, variables: {} };
+    fineBuckets.forEach((bucket) => {
+      const baseWorst = bucket.dgs
+        .map((dg) => (getHgReturnCoefficient(base.type, base.odds, dg) - 1) + this.getSettlementRatio(base.type, dg) * crownRebate)
+        .reduce((a, b) => (b < a ? b : a), Number.POSITIVE_INFINITY);
+      model.constraints[`p_${bucket.key}`] = { min: -C * baseWorst };
+    });
+    model.constraints.cap = { max: A * 10 };
+    model.variables.z = { z: 1, cap: 0 };
+    fineBuckets.forEach((bucket) => {
+      model.variables.z[`p_${bucket.key}`] = -1;
+    });
+
+    // HG 对冲规则：基准注来自皇冠胜平负，对冲注只使用皇冠让球
+    const hedgeOptions = crownOptions.filter((opt) => /^AH_/.test(String(opt.type || '')) && this.isFinitePositive(opt.odds));
+    hedgeOptions.forEach((opt, i) => {
+      const v: any = { z: 0, cap: 1 };
+      fineBuckets.forEach((bucket) => {
+        const crownWorst = bucket.dgs
+          .map((dg) => (getHgReturnCoefficient(opt.type, opt.odds, dg) - 1) + this.getSettlementRatio(opt.type, dg) * crownRebate)
+          .reduce((a, b) => (b < a ? b : a), Number.POSITIVE_INFINITY);
+        v[`p_${bucket.key}`] = crownWorst;
+      });
+      model.variables[`h_${i}`] = v;
+    });
+
+    const solved: any = solver.Solve(model);
+    if (!solved?.feasible) return null;
+
+    const crown_bets: CrownBet[] = [];
+    hedgeOptions.forEach((opt, i) => {
+      const amt = Number(solved[`h_${i}`] || 0);
+      if (this.isFinitePositive(amt, 0.01)) crown_bets.push({ type: opt.type, amount: amt, odds: opt.odds });
+    });
+    if (crown_bets.length === 0) return null;
+
+    const profitByGoalDiff = (dg: number) => {
+      const baseProfit = C * ((getHgReturnCoefficient(base.type, base.odds, dg) - 1) + this.getSettlementRatio(base.type, dg) * crownRebate);
+      let profit = baseProfit;
+      for (const b of crown_bets) {
+        profit += b.amount * ((getHgReturnCoefficient(b.type, b.odds, dg) - 1) + this.getSettlementRatio(b.type, dg) * crownRebate);
+      }
+      return profit;
+    };
+
+    const minByGoalDiffs = (dgs: number[]) =>
+      dgs.map((dg) => profitByGoalDiff(dg)).reduce((a, b) => (b < a ? b : a), Number.POSITIVE_INFINITY);
+
+    const pW = minByGoalDiffs([1, 2, 3, 4]);
+    const pD = profitByGoalDiff(0);
+    const pL = minByGoalDiffs([-1, -2, -3, -4]);
+    const minProfit = Math.min(pW, pD, pL);
+    if (!this.isFinitePositive(minProfit, 0.01)) return null;
+
+    const userInvest = C + crown_bets.reduce((s, b) => s + b.amount, 0);
+    const totalInvest = C / Math.max(1 - crownShare, 0.0001) + crown_bets.reduce((s, b) => s + b.amount / Math.max(1 - crownShare, 0.0001), 0);
+    if (!this.isFinitePositive(userInvest) || !this.isFinitePositive(totalInvest)) return null;
+
+    const rebateValue = (C + crown_bets.reduce((s, b) => s + b.amount, 0)) * crownRebate;
+    return {
+      name: `HG对冲(${base.type})`,
+      hg_base_bet: { type: base.type, amount: C, odds: base.odds },
+      crown_bets,
+      profits: { win: pW, draw: pD, lose: pL },
+      match_profits: { win: pW - rebateValue, draw: pD - rebateValue, lose: pL - rebateValue },
+      rebate: rebateValue,
+      rebates: { win: rebateValue, draw: rebateValue, lose: rebateValue },
+      min_profit: minProfit,
+      min_profit_rate: minProfit / userInvest,
+      total_invest: totalInvest,
+      user_invest: userInvest,
+    };
+  }
+
+  private static findAllHgOpportunities(
+    A: number,
+    crownOdds: { W: number; D: number; L: number; handicaps: Handicap[]; rebate: number; share: number },
+    _integerUnit: number = 10000
+  ): HedgeStrategy[] {
+    const crownOptions: { type: string; odds: number }[] = [
+      { type: 'STD_HOME', odds: Number(crownOdds.W || 0) },
+      { type: 'STD_DRAW', odds: Number(crownOdds.D || 0) },
+      { type: 'STD_AWAY', odds: Number(crownOdds.L || 0) },
+    ];
+    (crownOdds.handicaps || []).forEach((h) => {
+      const awayType = String(h.type).startsWith('+')
+        ? String(h.type).replace('+', '-')
+        : String(h.type).startsWith('-')
+        ? String(h.type).replace('-', '+')
+        : `-${h.type}`;
+      crownOptions.push({ type: `AH_HOME(${h.type})`, odds: Number(h.home_odds || 0) });
+      crownOptions.push({ type: `AH_AWAY(${awayType})`, odds: Number(h.away_odds || 0) });
+    });
+
+    const out: HedgeStrategy[] = [];
+    // HG 对冲规则：base 只允许皇冠胜平负（STD_*）
+    const baseCandidates = crownOptions.filter((o) => /^STD_/.test(String(o.type || '')) && this.isFinitePositive(o.odds));
+    for (const base of baseCandidates) {
+      const s = this.calculateGuaranteedHgLP(
+        A,
+        base,
+        crownOptions.filter((o) => this.isFinitePositive(o.odds)),
+        Number(crownOdds.rebate || 0),
+        Number(crownOdds.share || 0)
+      );
+      if (!s) continue;
+      if (!this.hasAllPositiveSingleTotalProfits(s, 0.01)) continue;
+      if (!(s.profits.win > 0 && s.profits.draw > 0 && s.profits.lose > 0)) continue;
       out.push(s);
     }
     return out

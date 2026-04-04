@@ -4,12 +4,28 @@ const HOME = '主胜';
 const DRAW = '平';
 const AWAY = '客胜';
 
-function includesAny(text: string, tokens: string[]) {
-  return tokens.some((token) => text.includes(token));
-}
+const HOME_TOKENS = ['主胜', 'home', 'homewin', 'std_w', 'standard_w'];
+const DRAW_TOKENS = ['平', 'draw', 'std_d', 'standard_d'];
+const AWAY_TOKENS = ['客胜', 'away', 'awaywin', 'std_l', 'standard_l'];
+
+const HANDICAP_WIN_TOKENS = ['让胜'];
+const HANDICAP_DRAW_TOKENS = ['让平'];
+const HANDICAP_LOSE_TOKENS = ['让负'];
 
 function normalizeText(raw: string) {
   return String(raw || '').replace(/\s+/g, '').trim();
+}
+
+function includesAny(text: string, tokens: string[]) {
+  const lower = normalizeText(text).toLowerCase();
+  return tokens.some((token) => lower.includes(String(token).toLowerCase()));
+}
+
+function detectSide(text: string): 'home' | 'draw' | 'away' | null {
+  if (includesAny(text, HOME_TOKENS)) return 'home';
+  if (includesAny(text, DRAW_TOKENS)) return 'draw';
+  if (includesAny(text, AWAY_TOKENS)) return 'away';
+  return null;
 }
 
 export function sideToLabel(side: Side) {
@@ -53,21 +69,18 @@ export function normalizeCrownTarget(raw: string) {
   const t = normalizeText(raw);
   if (!t) return '';
 
-  const toLabel = (source: string) => {
-    if (includesAny(source, ['主胜', '标准胜', '普胜'])) return HOME;
-    if (includesAny(source, ['客胜', '标准负', '普负', '负'])) return AWAY;
-    if (includesAny(source, ['平', '标准平', '普平'])) return DRAW;
-    return '';
-  };
-
   const m = t.match(/^(.*)\(([^)]+)\)$/);
   if (m) {
-    const side = toLabel(m[1]);
-    if (side) return `${side}(${m[2]})`;
+    const side = detectSide(m[1]);
+    if (side === 'home') return `${HOME}(${m[2]})`;
+    if (side === 'draw') return `${DRAW}(${m[2]})`;
+    if (side === 'away') return `${AWAY}(${m[2]})`;
   }
 
-  const side = toLabel(t);
-  if (side) return side;
+  const side = detectSide(t);
+  if (side === 'home') return HOME;
+  if (side === 'draw') return DRAW;
+  if (side === 'away') return AWAY;
   return t;
 }
 
@@ -79,14 +92,14 @@ export function normalizeParlaySideLabel(raw: string) {
   const handicapValue = Number(handicap);
   const isZeroHandicap = Number.isFinite(handicapValue) && Math.abs(handicapValue) < 1e-9;
 
-  if (includesAny(t, ['让胜'])) return handicap ? (isZeroHandicap ? HOME : `${HOME}(${handicap})`) : HOME;
-  if (includesAny(t, ['让平'])) return handicap ? (isZeroHandicap ? DRAW : `${DRAW}(${handicap})`) : DRAW;
-  if (includesAny(t, ['让负'])) return handicap ? (isZeroHandicap ? AWAY : `${AWAY}(${invertHandicap(handicap)})`) : AWAY;
+  if (includesAny(t, HANDICAP_WIN_TOKENS)) return handicap ? (isZeroHandicap ? HOME : `${HOME}(${handicap})`) : HOME;
+  if (includesAny(t, HANDICAP_DRAW_TOKENS)) return handicap ? (isZeroHandicap ? DRAW : `${DRAW}(${handicap})`) : DRAW;
+  if (includesAny(t, HANDICAP_LOSE_TOKENS)) return handicap ? (isZeroHandicap ? AWAY : `${AWAY}(${invertHandicap(handicap)})`) : AWAY;
 
-  if (includesAny(t, ['普胜', '标准胜', '主胜', '胜'])) return HOME;
-  if (includesAny(t, ['普平', '标准平', '平'])) return DRAW;
-  if (includesAny(t, ['普负', '标准负', '客胜', '负'])) return AWAY;
-
+  const side = detectSide(t);
+  if (side === 'home') return HOME;
+  if (side === 'draw') return DRAW;
+  if (side === 'away') return AWAY;
   return t;
 }
 
@@ -95,12 +108,13 @@ export function parseParlayRawSide(raw: string): { side: Side; handicap?: number
   const handicapText = t.match(/\(([^)]+)\)/)?.[1];
   const handicap = handicapText !== undefined ? Number(handicapText) : undefined;
 
-  if (includesAny(t, ['让胜'])) return { side: 'W', handicap, isHandicap: true };
-  if (includesAny(t, ['让平'])) return { side: 'D', handicap, isHandicap: true };
-  if (includesAny(t, ['让负'])) return { side: 'L', handicap, isHandicap: true };
+  if (includesAny(t, HANDICAP_WIN_TOKENS)) return { side: 'W', handicap, isHandicap: true };
+  if (includesAny(t, HANDICAP_DRAW_TOKENS)) return { side: 'D', handicap, isHandicap: true };
+  if (includesAny(t, HANDICAP_LOSE_TOKENS)) return { side: 'L', handicap, isHandicap: true };
 
-  if (includesAny(t, ['普胜', '标准胜', '主胜', '胜'])) return { side: 'W', handicap: 0, isHandicap: false };
-  if (includesAny(t, ['普平', '标准平', '平'])) return { side: 'D', handicap: 0, isHandicap: false };
+  const side = detectSide(t);
+  if (side === 'home') return { side: 'W', handicap: 0, isHandicap: false };
+  if (side === 'draw') return { side: 'D', handicap: 0, isHandicap: false };
   return { side: 'L', handicap: 0, isHandicap: false };
 }
 
@@ -119,5 +133,8 @@ export function parseCrownBetType(raw: string): { kind: 'std' | 'ah'; side: 'hom
     };
   }
 
+  const side = detectSide(normalized);
+  if (side === 'draw') return { kind: 'std', side: 'draw' };
+  if (side === 'away') return { kind: 'std', side: 'away' };
   return { kind: 'std', side: 'home' };
 }

@@ -74,7 +74,7 @@ function runSingleChecks(sampleLimit = 30): string[] {
     .all(sampleLimit) as any[];
 
   const errors: string[] = [];
-  const baseTypes: Array<'jingcai' | 'crown'> = ['jingcai', 'crown'];
+  const baseTypes: Array<'jingcai' | 'crown' | 'hg'> = ['jingcai', 'crown', 'hg'];
 
   for (const row of rows) {
     const jcOdds = {

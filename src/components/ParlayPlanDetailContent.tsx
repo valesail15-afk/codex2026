@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Card, Col, Empty, InputNumber, Row, Select, Space, Tag, Typography } from 'antd';
 import axios from 'axios';
 import type { HedgeStrategy } from '../types';

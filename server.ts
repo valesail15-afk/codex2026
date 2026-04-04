@@ -284,13 +284,21 @@ function buildSingleHighlightKeys(strategy: any) {
     keys.add(market === 'handicap' ? `jc_handicap_${side}` : `jc_standard_${side}`);
   }
 
-  for (const bet of strategy?.crown_bets || []) {
+  const crownBets = [
+    ...(strategy?.hg_base_bet?.type ? [strategy.hg_base_bet] : []),
+    ...(Array.isArray(strategy?.crown_bets) ? strategy.crown_bets : []),
+  ];
+
+  for (const bet of crownBets) {
     const normalized = normalizeCrownTarget(String(bet?.type || ''));
     if (!normalized) continue;
     const parsed = parseNormalizedCrownLabel(normalized);
     if (!parsed) continue;
     const sideKey = parsed.sideKey;
-    const handicapLine = parsed.handicapLine;
+    const handicapLine =
+      parsed.handicapLine && sideKey === 'L'
+        ? invertHandicap(parsed.handicapLine)
+        : parsed.handicapLine;
     if (handicapLine) {
       keys.add(`crown_ah_${handicapLine}_${sideKey}`);
     } else {
@@ -472,6 +480,18 @@ function buildParlayDisplayRecord(row: any) {
 
 function isManualMatchId(matchId?: string) {
   return typeof matchId === 'string' && matchId.startsWith('manual_');
+}
+
+function parseSingleBaseType(raw: any): 'jingcai' | 'crown' | 'hg' | null {
+  const v = String(raw || '').trim().toLowerCase();
+  if (v === 'jingcai' || v === 'crown' || v === 'hg') return v;
+  return null;
+}
+
+function parseParlayBaseType(raw: any): 'jingcai' | 'crown' | null {
+  const v = String(raw || '').trim().toLowerCase();
+  if (v === 'jingcai' || v === 'crown') return v;
+  return null;
 }
 
 function getExpectedOrigin(req: express.Request) {
@@ -1028,7 +1048,10 @@ async function startServer() {
   });
 
   app.get('/api/arbitrage/opportunities', authenticateToken, (req: AuthRequest, res) => {
-    const baseType = req.query.base_type || 'jingcai';
+    const baseType = parseSingleBaseType(req.query.base_type);
+    if (!baseType) {
+      return res.status(400).json({ error: 'Invalid base_type, expected jingcai|crown|hg' });
+    }
     const opps = db.prepare(`
       SELECT o.*, m.league, m.home_team, m.away_team, m.match_time, m.jingcai_handicap as jc_handicap,
              j.win_odds as j_w, j.draw_odds as j_d, j.lose_odds as j_l,
@@ -1057,7 +1080,10 @@ async function startServer() {
   });
 
   app.get('/api/arbitrage/parlay-opportunities', authenticateToken, (req: AuthRequest, res) => {
-    const baseType = req.query.base_type || 'jingcai';
+    const baseType = parseParlayBaseType(req.query.base_type);
+    if (!baseType) {
+      return res.status(400).json({ error: 'Invalid base_type, expected jingcai|crown' });
+    }
     const opps = db.prepare(`
       SELECT o.*, 
              m1.league as league_1, m1.home_team as home_team_1, m1.away_team as away_team_1, m1.match_time as match_time_1, m1.jingcai_handicap as jc_handicap_1,
@@ -1083,7 +1109,10 @@ async function startServer() {
   });
 
   app.get('/api/arbitrage/parlay-opportunities/:id', authenticateToken, (req: AuthRequest, res) => {
-    const baseType = (req.query.base_type as string) || 'jingcai';
+    const baseType = parseParlayBaseType(req.query.base_type);
+    if (!baseType) {
+      return res.status(400).json({ error: 'Invalid base_type, expected jingcai|crown' });
+    }
     const { id } = req.params;
     const row = db.prepare(`
       SELECT o.*,
@@ -1121,7 +1150,10 @@ async function startServer() {
 
   app.post('/api/arbitrage/calculate', authenticateToken, (req: AuthRequest, res) => {
     const { match_id, jingcai_side, jingcai_market, jingcai_amount, hedge_strategy_name, base_type, integer_unit } = req.body;
-    const currentBaseType = base_type || 'jingcai';
+    const currentBaseType = parseSingleBaseType(base_type || 'jingcai');
+    if (!currentBaseType) {
+      return res.status(400).json({ error: 'Invalid base_type, expected jingcai|crown|hg' });
+    }
     const currentIntegerUnit = Math.max(1000, Number.parseInt(String(integer_unit || 10000), 10) || 10000);
     
     const m = db.prepare(`
@@ -1138,6 +1170,20 @@ async function startServer() {
 
     if (!m) return res.status(404).json({ error: 'Match not found' });
 
+    const settingsRows = db
+      .prepare(
+        "SELECT key, value FROM system_settings WHERE user_id = ? AND key IN ('default_jingcai_rebate','default_jingcai_share','default_crown_rebate','default_crown_share')"
+      )
+      .all(req.user!.id) as Array<{ key: string; value: string }>;
+    const settingsMap = settingsRows.reduce((acc: Record<string, string>, row) => {
+      acc[row.key] = row.value;
+      return acc;
+    }, {});
+    const configuredJcRebate = Number.parseFloat(settingsMap['default_jingcai_rebate'] || '');
+    const configuredJcShare = Number.parseFloat(settingsMap['default_jingcai_share'] || '');
+    const configuredCrownRebate = Number.parseFloat(settingsMap['default_crown_rebate'] || '');
+    const configuredCrownShare = Number.parseFloat(settingsMap['default_crown_share'] || '');
+
     const jcOdds = {
       W: m.j_w,
       D: m.j_d,
@@ -1146,14 +1192,14 @@ async function startServer() {
       HD: m.j_hd,
       HL: m.j_hl,
       handicapLine: m.jc_handicap,
-      rebate: m.j_r,
-      share: m.j_s
+      rebate: Number.isFinite(configuredJcRebate) ? configuredJcRebate : m.j_r,
+      share: Number.isFinite(configuredJcShare) ? configuredJcShare : m.j_s
     };
     const crownOdds = { 
       W: m.c_w, D: m.c_d, L: m.c_l, 
       handicaps: m.c_h ? JSON.parse(m.c_h) : [], 
-      rebate: m.c_r,
-      share: m.c_s
+      rebate: Number.isFinite(configuredCrownRebate) ? configuredCrownRebate : m.c_r,
+      share: Number.isFinite(configuredCrownShare) ? configuredCrownShare : m.c_s
     };
 
     const opportunities = ArbitrageEngine.findAllOpportunities(jingcai_amount, jcOdds, crownOdds, currentBaseType, currentIntegerUnit);
