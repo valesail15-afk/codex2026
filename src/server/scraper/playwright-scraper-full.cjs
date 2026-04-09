@@ -396,7 +396,12 @@ async function enrichTradeRowsWithAsianOdds(context, matchedRows) {
     try {
       const crownAsia = await fetchCrownAsiaOdds(context, asiaLink);
       if (crownAsia) {
-        row.crownAsia = crownAsia;
+        row.crownAsia = {
+          handicap: crownAsia.handicap,
+          homeWater: crownAsia.homeWater,
+          awayWater: crownAsia.awayWater,
+        };
+        row.crownHandicaps = Array.isArray(crownAsia.crownHandicaps) ? crownAsia.crownHandicaps : [];
       }
     } catch {}
   });
@@ -448,12 +453,21 @@ async function fetchCrownAsiaOddsUncached(context, url) {
         }))
         .filter((item) => item.handicap && item.handicap !== '-' && item.homeWater && item.awayWater);
 
-      const crownRow = parsed.find((item) => /\u7687\u51A0|crown/i.test(item.company));
-      if (crownRow) {
+      const crownRows = parsed.filter((item) => /\u7687\u51A0|crown/i.test(item.company));
+      if (crownRows.length > 0) {
+        const crownHandicaps = crownRows
+          .map((item) => ({
+            type: item.handicap,
+            home_odds: Number((item.homeWater || '').replace(/[^0-9.]/g, '')) || 0,
+            away_odds: Number((item.awayWater || '').replace(/[^0-9.]/g, '')) || 0,
+          }))
+          .filter((item) => item.type && item.home_odds > 0 && item.away_odds > 0);
+        const crownRow = crownRows[0];
         return {
           homeWater: crownRow.homeWater,
           handicap: crownRow.handicap,
           awayWater: crownRow.awayWater,
+          crownHandicaps,
         };
       }
 
@@ -463,6 +477,13 @@ async function fetchCrownAsiaOddsUncached(context, url) {
           homeWater: firstRow.homeWater,
           handicap: firstRow.handicap,
           awayWater: firstRow.awayWater,
+          crownHandicaps: [
+            {
+              type: firstRow.handicap,
+              home_odds: Number((firstRow.homeWater || '').replace(/[^0-9.]/g, '')) || 0,
+              away_odds: Number((firstRow.awayWater || '').replace(/[^0-9.]/g, '')) || 0,
+            },
+          ].filter((item) => item.type && item.home_odds > 0 && item.away_odds > 0),
         };
       }
 
@@ -513,6 +534,7 @@ function mergeMatchData(liveData, tradeData) {
       jingcaiOdds: tradeMatch?.jingcaiOdds || { win: '-', draw: '-', lose: '-' },
       jingcaiHandicapOdds: tradeMatch?.jingcaiHandicapOdds || { win: '-', draw: '-', lose: '-' },
       crownAsia: tradeMatch?.crownAsia || { handicap: '-', homeWater: '-', awayWater: '-' },
+      crownHandicaps: tradeMatch?.crownHandicaps || [],
     };
   });
 }

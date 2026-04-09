@@ -1,29 +1,29 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 import fs from 'fs';
 import path from 'path';
 
 const root = path.resolve(process.argv[2] || process.cwd());
 const deepMode = process.argv.includes('--deep');
+const strictTerms = process.argv.includes('--strict-terms');
+
 const includeExt = new Set(['.ts', '.tsx', '.js', '.cjs', '.json', '.md', '.css', '.html']);
 const skipDirs = new Set(['node_modules', 'dist', '.git', '.gstack']);
 const skipFiles = new Set(['PROJECT_DOC.md']);
-const deepMojibakeAllowFiles = new Set([
-  'src/pages/Calculator.tsx',
-  'src/pages/ParlayCalculator.tsx',
-  'src/server/arbitrageEngine.ts',
-]);
-const mojibakeTokens = [
-  '鏍囧噯',
-  '涓昏儨',
-  '瀹㈣儨',
-  '鍔犺浇',
-  '绔炲僵',
-  '鐨囧啝',
-  '宸查殣钘',
-  '鏄剧ず',
-  '灞曞紑',
-  '鏇村',
-  '闁哄秴娲',
+
+const mojibakeTokens = ['�', '???', '娑撴', '鐎广', '閺', '鍒╂鼎鐜?/th'];
+
+const terminologyRules = [
+  { bad: '盈利率', good: '利润率' },
+  { bad: '命中金额', good: '中奖' },
+  { bad: '实际投注', good: '实投' },
+];
+
+const coreFilesForTerms = [
+  'src/pages/Dashboard.tsx',
+  'src/components/SinglePlanDetailContent.tsx',
+  'src/components/ParlayPlanDetailContent.tsx',
+  'src/components/HgPlanDetailContent.tsx',
+  'src/shared/oddsText.ts',
 ];
 
 const findings = [];
@@ -47,45 +47,64 @@ function walk(dir) {
 
 function isCoreSource(full) {
   const rel = path.relative(root, full).replace(/\\/g, '/');
-  return rel === 'server.ts' || rel.startsWith('src/');
+  return rel === 'server.ts' || rel.startsWith('src/') || rel.startsWith('tools/');
+}
+
+function pushFinding(file, line, issue, sample) {
+  findings.push({ file, line, issue, sample: sample.length > 180 ? `${sample.slice(0, 180)}...` : sample });
 }
 
 function scanFile(file) {
   const buf = fs.readFileSync(file);
   const rel = path.relative(root, file).replace(/\\/g, '/');
+
   if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
-    findings.push({ file, line: 1, issue: 'BOM', sample: '文件包含 UTF-8 BOM' });
+    pushFinding(file, 1, 'BOM', '文件包含 UTF-8 BOM');
   }
+
   const text = buf.toString('utf8');
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.includes('\uFFFD')) {
-      findings.push({ file, line: i + 1, issue: 'U+FFFD', sample: trim(line) });
+      pushFinding(file, i + 1, 'U+FFFD', line);
     }
-    if (deepMode && !deepMojibakeAllowFiles.has(rel)) {
+
+    if (deepMode) {
       for (const token of mojibakeTokens) {
-        if (line.includes(token)) {
-          findings.push({ file, line: i + 1, issue: 'Mojibake', sample: trim(line) });
+        if (token && line.includes(token)) {
+          pushFinding(file, i + 1, 'Mojibake', line);
           break;
+        }
+      }
+    }
+
+    if (strictTerms && coreFilesForTerms.includes(rel)) {
+      for (const rule of terminologyRules) {
+        if (line.includes(rule.bad)) {
+          pushFinding(file, i + 1, 'Term', `请使用“${rule.good}”，不要使用“${rule.bad}”`);
         }
       }
     }
   }
 }
 
-function trim(s) {
-  return s.length > 180 ? `${s.slice(0, 180)}...` : s;
+const rootStat = fs.statSync(root);
+if (rootStat.isFile()) {
+  const ext = path.extname(root).toLowerCase();
+  if (includeExt.has(ext)) {
+    scanFile(root);
+  }
+} else {
+  walk(root);
 }
 
-walk(root);
-
 if (findings.length === 0) {
-  console.log(`OK: 未检测到文本污染（模式: ${deepMode ? 'deep' : 'core'}）`);
+  console.log(`OK: 未检测到文本污染（模式: ${deepMode ? 'deep' : 'core'}${strictTerms ? '+terms' : ''}）`);
   process.exit(0);
 }
 
-console.error(`发现 ${findings.length} 处文本完整性问题:`);
+console.error(`发现 ${findings.length} 处文本完整性问题`);
 for (const f of findings) {
   console.error(`${path.relative(root, f.file)}:${f.line} [${f.issue}] ${f.sample}`);
 }

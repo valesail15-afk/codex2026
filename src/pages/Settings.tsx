@@ -7,7 +7,6 @@ import { useNavigate } from 'react-router-dom';
 
 const { Title, Text } = Typography;
 
-const percentKeys = ['default_jingcai_rebate', 'default_crown_rebate', 'default_jingcai_share', 'default_crown_share'];
 type HgaAliasRow = {
   trade500_name: string;
   hga_name: string;
@@ -75,9 +74,6 @@ const Settings: React.FC = () => {
     const fetchSettings = async () => {
       const res = await axios.get('/api/settings');
       const data = { ...res.data };
-      percentKeys.forEach((k) => {
-        if (data[k] !== undefined) data[k] = Number(data[k]) * 100;
-      });
       form.setFieldsValue({
         auto_scan: false,
         sound_alert: false,
@@ -111,9 +107,6 @@ const Settings: React.FC = () => {
       const payload = { ...values };
       payload.hga_team_alias_map = JSON.stringify(buildHgaAliasMap(values.hga_team_alias_rows || []), null, 2);
       delete payload.hga_team_alias_rows;
-      percentKeys.forEach((k) => {
-        if (payload[k] !== undefined) payload[k] = Number(payload[k]) / 100;
-      });
       delete payload.hga_status;
       delete payload.hga_status_message;
       delete payload.hga_password_configured;
@@ -121,9 +114,6 @@ const Settings: React.FC = () => {
       await axios.post('/api/settings', payload);
       const refreshed = await axios.get('/api/settings');
       const data = { ...refreshed.data };
-      percentKeys.forEach((k) => {
-        if (data[k] !== undefined) data[k] = Number(data[k]) * 100;
-      });
       form.setFieldsValue({
         hga_team_alias_rows: parseHgaAliasMap(data.hga_team_alias_map),
         ...data,
@@ -196,32 +186,6 @@ const Settings: React.FC = () => {
 
       <Card className="shadow-sm">
         <Form form={form} layout="vertical" onFinish={onSave}>
-          <Title level={5}>默认返水与占比</Title>
-          <Row gutter={16}>
-            <Col xs={24} md={12}>
-              <Form.Item label="竞彩默认返水 (%)" name="default_jingcai_rebate" rules={[{ required: true }]}>
-                <InputNumber min={0} max={100} step={0.1} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item label="皇冠默认返水 (%)" name="default_crown_rebate" rules={[{ required: true }]}>
-                <InputNumber min={0} max={100} step={0.1} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item label="竞彩占比 (%)" name="default_jingcai_share" rules={[{ required: true }]}>
-                <InputNumber min={0} max={100} step={0.1} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item label="皇冠占比 (%)" name="default_crown_share" rules={[{ required: true }]}>
-                <InputNumber min={0} max={100} step={0.1} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Divider />
-
           {user?.role === 'Admin' && (
             <>
               <Title level={5}>数据同步</Title>

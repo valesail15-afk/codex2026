@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, App, Card, Col, Empty, Form, Row, Select, Space, Table, Tag, Typography } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import type { HedgeStrategy } from '../types';
 import { invertHandicap, normalizeCrownTarget, parseCrownBetType, parseHandicap } from '../shared/oddsText';
+import { matrixTableStyle, matrixWrapStyle, MATRIX_UI } from '../shared/matrixUi';
+import { OUTCOME_CN, TERMS, currency, signedCurrency } from '../shared/terminology';
 
 const { Title, Text } = Typography;
 
@@ -11,8 +13,6 @@ type Side = 'W' | 'D' | 'L';
 type Market = 'normal' | 'handicap';
 type BaseType = 'jingcai' | 'crown';
 
-const currency = (n: number) => `¥${Number(n || 0).toFixed(2)}`;
-const signedCurrency = (n: number) => `${Number(n || 0) >= 0 ? '+' : '-'}¥${Math.abs(Number(n || 0)).toFixed(2)}`;
 const rateHot = (r: number) => Number(r || 0) >= 0.005;
 const summaryBlue = '#1677ff';
 
@@ -28,7 +28,7 @@ const parseCrownHandicapRows = (raw: any) => {
   return Array.isArray(parsed) ? parsed : [];
 };
 
-const formatShare = (value: number) => `${(Number(value || 0) * 100).toFixed(1)}%`;
+const formatPercent = (value: number) => `${(Number(value || 0) * 100).toFixed(1)}%`;
 
 const formatJcSideLabel = (side: Side, market: Market, line: string) => {
   if (market === 'normal') {
@@ -75,23 +75,26 @@ export interface SinglePlanDetailContentProps {
   matchId?: string;
   initialBaseType?: BaseType;
   showTitle?: boolean;
+  onLoaded?: () => void;
 }
 
 const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
   matchId,
   initialBaseType = 'jingcai',
   showTitle = true,
+  onLoaded,
 }) => {
   const { message } = App.useApp();
   const [form] = Form.useForm();
 
   const [loading, setLoading] = useState(false);
   const [matchInfo, setMatchInfo] = useState<any>(null);
-  const [settingsShare, setSettingsShare] = useState({ jc: 0, crown: 0 });
+  const [settingsMeta, setSettingsMeta] = useState({ jcShare: 0, crownShare: 0, jcRebate: 0.13, crownRebate: 0.02 });
   const [strategies, setStrategies] = useState<HedgeStrategy[]>([]);
   const [selected, setSelected] = useState<HedgeStrategy | null>(null);
   const [optionMeta, setOptionMeta] = useState<Record<string, { hasPlan: boolean; bestRate: number; list: HedgeStrategy[] }>>({});
   const [baseTypeAvailability, setBaseTypeAvailability] = useState<Record<BaseType, boolean>>({ jingcai: true, crown: true });
+  const loadedNotifiedRef = useRef(false);
 
   const initialUnit = 10000;
 
@@ -197,18 +200,27 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
 
   useEffect(() => {
     if (!matchId) return;
+    loadedNotifiedRef.current = false;
     (async () => {
       const [matchRes, settingRes] = await Promise.all([axios.get(`/api/matches/${matchId}`), axios.get('/api/settings')]);
       setMatchInfo(matchRes.data);
-      setSettingsShare({
-        jc: Number(settingRes.data?.default_jingcai_share || 0),
-        crown: Number(settingRes.data?.default_crown_share || 0),
+      setSettingsMeta({
+        jcShare: Number(settingRes.data?.default_jingcai_share || 0),
+        crownShare: Number(settingRes.data?.default_crown_share || 0),
+        jcRebate: Number(settingRes.data?.default_jingcai_rebate || 0.13),
+        crownRebate: Number(settingRes.data?.default_crown_rebate || 0.02),
       });
       form.setFieldsValue({ base_type: initialBaseType, integer_unit: initialUnit });
     })().catch(() => {
       message.error('加载比赛信息失败');
     });
-  }, [form, initialBaseType, matchId, message]);
+  }, [form, initialBaseType, matchId, message, onLoaded]);
+
+  useEffect(() => {
+    if (!matchInfo || loadedNotifiedRef.current) return;
+    loadedNotifiedRef.current = true;
+    onLoaded?.();
+  }, [matchInfo, onLoaded]);
 
   useEffect(() => {
     if (!matchInfo || jcOptions.length === 0) return;
@@ -226,7 +238,7 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
 
     if (changed.base_type === 'crown' && !baseTypeAvailability.crown) {
       form.setFieldValue('base_type', 'jingcai');
-      message.warning('当前没有可用的皇冠整数方案，已切回竞彩');
+      message.warning('当前没有可用的皇冠整单方案，已切回竞彩');
       await refreshAllOptions('jingcai', integerUnit);
       return;
     }
@@ -286,8 +298,8 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
         target: currentPickedOption?.betLabel || '竞彩',
         odds: getCurrentJcOdds(selected),
         amount: jcAmt,
-        share: settingsShare.jc,
-        realAmount: jcAmt / Math.max(1 - settingsShare.jc, 0.0001),
+        share: settingsMeta.jcShare,
+        realAmount: jcAmt / Math.max(1 - settingsMeta.jcShare, 0.0001),
       },
       ...((selected.crown_bets || []).map((b, i) => {
         const amt = Number(b.amount || 0);
@@ -297,12 +309,12 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
           target: normalizeCrownTarget(String(b.type || '')),
           odds: Number(b.odds || 0),
           amount: amt,
-          share: settingsShare.crown,
-          realAmount: amt / Math.max(1 - settingsShare.crown, 0.0001),
+          share: settingsMeta.crownShare,
+          realAmount: amt / Math.max(1 - settingsMeta.crownShare, 0.0001),
         };
       }) as any[]),
     ];
-  }, [currentPickedOption, selected, settingsShare]);
+  }, [currentPickedOption, selected, settingsMeta]);
 
   const realInvestTotal = useMemo(() => betRows.reduce((sum, row: any) => sum + Number(row.realAmount || 0), 0), [betRows]);
 
@@ -559,11 +571,13 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
 
     return {
       jcShare: Number(betRows.find((row: any) => row.platform === '竞彩')?.share || 0),
-      crownShare: Number(betRows.find((row: any) => row.platform === '皇冠')?.share || settingsShare.crown || 0),
+      crownShare: Number(betRows.find((row: any) => row.platform === '皇冠')?.share || settingsMeta.crownShare || 0),
+      jcRebate: Number(settingsMeta.jcRebate || 0),
+      crownRebate: Number(settingsMeta.crownRebate || 0),
       standard,
       handicap,
     };
-  }, [betRows, currentPickedOption, matchInfo, outcomeRows, selected, settingsShare.crown]);
+  }, [betRows, currentPickedOption, matchInfo, outcomeRows, selected, settingsMeta.crownShare, settingsMeta.jcRebate, settingsMeta.crownRebate]);
 
   const title = matchInfo ? `单场方案：${matchInfo.home_team} vs ${matchInfo.away_team}` : '单场下注方案';
 
@@ -585,7 +599,7 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
             extra={
               <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'nowrap' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 210 }}>
-                  <div style={{ fontSize: 13, color: '#595959', whiteSpace: 'nowrap' }}>整数控制</div>
+                  <div style={{ fontSize: 13, color: '#595959', whiteSpace: 'nowrap' }}>整单控制</div>
                   <Form.Item name="base_type" style={{ marginBottom: 0, flex: 1 }}>
                     <Select
                       options={[
@@ -611,16 +625,16 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
             }
           >
             {summaryMatrix ? (
-              <div style={{ marginBottom: 18, overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', background: '#fff' }}>
+              <div style={{ marginBottom: 18, ...matrixWrapStyle }} className="matrix-responsive-wrap">
+                <table style={matrixTableStyle} className="matrix-responsive-table">
                   <thead>
                     <tr>
                       <th style={{ border: '1px solid #d9d9d9', background: '#f7f8fa', padding: '10px 8px', width: 74 }} />
                       <th colSpan={3} style={{ border: '1px solid #d9d9d9', background: '#f7f8fa', padding: '10px 8px', textAlign: 'center', fontWeight: 700 }}>
-                        {'\u7ade\u5f69\uff08\u5360\u6bd4: '}{formatShare(summaryMatrix.jcShare)}{'\uff09'}
+                        {`竞彩（返水: ${formatPercent(summaryMatrix.jcRebate)} | 占比: ${formatPercent(summaryMatrix.jcShare)}）`}
                       </th>
                       <th colSpan={3} style={{ border: '1px solid #d9d9d9', background: '#f7f8fa', padding: '10px 8px', textAlign: 'center', fontWeight: 700 }}>
-                        {'\u7687\u51a0\uff08\u5360\u6bd4: '}{formatShare(summaryMatrix.crownShare)}{'\uff09'}
+                        {`皇冠（返水: ${formatPercent(summaryMatrix.crownRebate)} | 占比: ${formatPercent(summaryMatrix.crownShare)}）`}
                       </th>
                     </tr>
                     <tr>
@@ -640,13 +654,13 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
                   <tbody>
                     {[
                       { label: '赔率', key: 'oddsLabel', section: 'standard' },
-                      { label: '下注', key: 'stakeLines', section: 'standard' },
-                      { label: '中奖', key: 'payoutLines', section: 'standard' },
-                      { label: '利润', key: 'profitLines', section: 'standard' },
+                      { label: TERMS.stake, key: 'stakeLines', section: 'standard' },
+                      { label: TERMS.payout, key: 'payoutLines', section: 'standard' },
+                      { label: TERMS.profit, key: 'profitLines', section: 'standard' },
                       { label: '赔率', key: 'oddsLabel', section: 'handicap' },
-                      { label: '下注', key: 'stakeLines', section: 'handicap' },
-                      { label: '中奖', key: 'payoutLines', section: 'handicap' },
-                      { label: '利润', key: 'profitLines', section: 'handicap' },
+                      { label: TERMS.stake, key: 'stakeLines', section: 'handicap' },
+                      { label: TERMS.payout, key: 'payoutLines', section: 'handicap' },
+                      { label: TERMS.profit, key: 'profitLines', section: 'handicap' },
                     ].map((row, rowIndex) => {
                       const rowKey = row.key as 'oddsLabel' | 'stakeLines' | 'payoutLines' | 'profitLines';
                       const section = row.section === 'standard' ? summaryMatrix.standard : summaryMatrix.handicap;
@@ -750,7 +764,7 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
                           <Text style={{ color: '#389e0d' }}>{signedCurrency(r.rebate)}</Text>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 'auto' }}>
-                          <Text strong>总利润</Text>
+                          <Text strong>总利润:</Text>
                           <Text strong style={{ color: Number(r.total || 0) >= 0 ? '#389e0d' : '#cf1322' }}>{signedCurrency(r.total)}</Text>
                         </div>
                       </div>
@@ -786,3 +800,8 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
 };
 
 export default SinglePlanDetailContent;
+
+
+
+
+

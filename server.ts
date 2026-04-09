@@ -1,4 +1,4 @@
-﻿import express from 'express';
+import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
@@ -14,11 +14,19 @@ import { invertHandicap, normalizeCrownTarget, parseParlayRawSide, sideToLabel }
 const DEFAULT_SYNC_INTERVAL_SECONDS = 90;
 const MIN_SYNC_INTERVAL_SECONDS = 60;
 const LAST_SYNC_SETTING_KEY = 'last_sync_at';
+const ARBITRAGE_SETTING_KEYS = [
+  'default_jingcai_rebate',
+  'default_crown_rebate',
+  'default_jingcai_share',
+  'default_crown_share',
+] as const;
 const ADMIN_ONLY_SETTINGS_KEYS = new Set([
   'hga_enabled',
   'hga_username',
   'hga_password',
   'hga_team_alias_map',
+  'hga_team_alias_pending_suggestions',
+  'hga_team_alias_auto_apply_threshold',
   'hga_runtime_status',
   'hga_runtime_message',
 ]);
@@ -190,16 +198,16 @@ function toDisplayOdds(value: any) {
 }
 
 function handicapSideLabel(side: 'W' | 'D' | 'L', handicapLine: string) {
-  if (side === 'W') return `主胜(${handicapLine})`;
-  if (side === 'D') return `平(${handicapLine})`;
-  return `客胜(${invertHandicap(handicapLine)})`;
+  if (side === 'W') return `\u4e3b\u80dc(${handicapLine})`;
+  if (side === 'D') return `\u5e73(${handicapLine})`;
+  return `\u5ba2\u80dc(${invertHandicap(handicapLine)})`;
 }
 
 function parseNormalizedCrownLabel(label: string) {
-  const matched = String(label || '').trim().match(/^(主胜|平|客胜)(?:\(([^)]+)\))?$/);
+  const matched = String(label || '').trim().match(/^(\u4e3b\u80dc|\u5e73|\u5ba2\u80dc)(?:\(([^)]+)\))?$/);
   if (!matched) return null;
   return {
-    sideKey: matched[1] === '主胜' ? 'W' : matched[1] === '平' ? 'D' : 'L',
+    sideKey: matched[1] === '\u4e3b\u80dc' ? 'W' : matched[1] === '\u5e73' ? 'D' : 'L',
     handicapLine: matched[2] || '',
   } as const;
 }
@@ -569,7 +577,7 @@ async function startServer() {
       const normalizedUsername = typeof username === 'string' ? username.trim() : '';
       const normalizedPassword = typeof password === 'string' ? password : '';
       if (!normalizedUsername || !normalizedPassword) {
-        return res.status(400).json({ error: 'username 鍜?password 蹇呭～', code: 'INVALID_LOGIN_PAYLOAD' });
+        return res.status(400).json({ error: 'username and password are required', code: 'INVALID_LOGIN_PAYLOAD' });
       }
       const ip = req.ip || '';
       const userAgent = String(req.headers['user-agent'] || '');
@@ -584,12 +592,12 @@ async function startServer() {
       if (isUserExpired(user)) {
         db.prepare("UPDATE users SET status = 'expired', updated_at = ? WHERE id = ?").run(formatLocalDbDateTime(), user.id);
         revokeAllUserSessions(user.id);
-        return res.status(403).json({ error: '账户已到期，请联系管理员续费。', code: 'ACCOUNT_EXPIRED', expires_at: user.expires_at });
+        return res.status(403).json({ error: 'Account expired, please contact admin', code: 'ACCOUNT_EXPIRED', expires_at: user.expires_at });
       }
 
       const lockUntilTs = user.lock_until ? new Date(user.lock_until).getTime() : 0;
       if (user.status === 'locked' || user.is_locked || (lockUntilTs && lockUntilTs > Date.now())) {
-        return res.status(403).json({ error: '账户已锁定', code: 'ACCOUNT_LOCKED', lock_until: user.lock_until || null });
+        return res.status(403).json({ error: 'Account locked', code: 'ACCOUNT_LOCKED', lock_until: user.lock_until || null });
       }
 
       const passwordMatch = bcrypt.compareSync(normalizedPassword, user.password);
@@ -716,8 +724,8 @@ async function startServer() {
           username,
           hashedPassword,
           role,
-          package_name || '鍩虹濂楅',
-          expires_at || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+          package_name || 'basic',
+          expires_at || null,
           'normal',
           max_duration || 0,
           nowText,
@@ -764,15 +772,36 @@ async function startServer() {
     const { username, password, role, package_name, expires_at, max_duration, status } = req.body;
     try {
       if (Number(id) === req.user!.id && status === 'locked') {
-        return res.status(400).json({ error: '管理员不能冻结自己' });
+        return res.status(400).json({ error: 'Cannot lock current logged-in user' });
       }
       if (password) {
         const hashedPassword = bcrypt.hashSync(password, 10);
         db.prepare(`UPDATE users SET username = ?, password = ?, role = ?, package_name = ?, expires_at = ?, status = ?, is_locked = CASE WHEN ? = 'locked' THEN 1 ELSE 0 END, max_duration = ?, updated_at = ? WHERE id = ?`)
-          .run(username, hashedPassword, role, package_name || '鍩虹濂楅', expires_at || null, status || 'normal', status || 'normal', max_duration || 0, formatLocalDbDateTime(), id);
+          .run(
+            username,
+            hashedPassword,
+            role,
+            package_name || 'basic',
+            expires_at || null,
+            status || 'normal',
+            status || 'normal',
+            max_duration || 0,
+            formatLocalDbDateTime(),
+            id
+          );
       } else {
         db.prepare(`UPDATE users SET username = ?, role = ?, package_name = ?, expires_at = ?, status = ?, is_locked = CASE WHEN ? = 'locked' THEN 1 ELSE 0 END, max_duration = ?, updated_at = ? WHERE id = ?`)
-          .run(username, role, package_name || '鍩虹濂楅', expires_at || null, status || 'normal', status || 'normal', max_duration || 0, formatLocalDbDateTime(), id);
+          .run(
+            username,
+            role,
+            package_name || 'basic',
+            expires_at || null,
+            status || 'normal',
+            status || 'normal',
+            max_duration || 0,
+            formatLocalDbDateTime(),
+            id
+          );
       }
       if (status === 'locked') {
         revokeAllUserSessions(Number(id));
@@ -800,7 +829,7 @@ async function startServer() {
   app.post('/api/admin/users/:id/freeze', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
     const { id } = req.params;
     if (Number(id) === req.user!.id) {
-      return res.status(400).json({ error: '管理员不能冻结自己' });
+      return res.status(400).json({ error: 'Cannot freeze current user' });
     }
     db.prepare("UPDATE users SET status = 'locked', is_locked = 1, lock_until = ?, updated_at = ? WHERE id = ?").run(formatLocalDbDateTime(new Date(Date.now() + 3650 * 24 * 3600 * 1000)), formatLocalDbDateTime(), id);
     revokeAllUserSessions(Number(id));
@@ -818,7 +847,7 @@ async function startServer() {
   app.post('/api/admin/users/:id/reset-password', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
     const { id } = req.params;
     const { password } = req.body || {};
-    if (!password || String(password).length < 6) return res.status(400).json({ error: '密码至少 6 位' });
+    if (!password || String(password).length < 6) return res.status(400).json({ error: 'Password length must be at least 6' });
     const hash = bcrypt.hashSync(String(password), 10);
     db.prepare('UPDATE users SET password = ?, updated_at = ? WHERE id = ?').run(hash, formatLocalDbDateTime(), id);
     revokeAllUserSessions(Number(id));
@@ -859,7 +888,7 @@ async function startServer() {
     const { id } = req.params;
     try {
       if (Number(id) === req.user!.id) {
-        return res.status(400).json({ error: '管理员不能删除自己' });
+        return res.status(400).json({ error: 'Cannot delete current user' });
       }
       const user = db.prepare('SELECT username FROM users WHERE id = ?').get(id) as any;
       db.transaction(() => {
@@ -913,7 +942,7 @@ async function startServer() {
     res.json({ stats, rows });
   });
 
-  // API 鐠侯垳鏁?(Protected)
+  // API health check (public)
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
@@ -1148,6 +1177,28 @@ async function startServer() {
     }
   });
 
+  app.get('/api/arbitrage/rescan-meta', authenticateToken, (req: AuthRequest, res) => {
+    const latestScan = db
+      .prepare('SELECT created_at FROM scrape_health_logs ORDER BY created_at DESC LIMIT 1')
+      .get() as { created_at?: string } | undefined;
+    const latestSingle = db
+      .prepare('SELECT created_at FROM arbitrage_opportunities WHERE user_id = ? ORDER BY created_at DESC LIMIT 1')
+      .get(req.user!.id) as { created_at?: string } | undefined;
+    const latestParlay = db
+      .prepare('SELECT created_at FROM parlay_opportunities WHERE user_id = ? ORDER BY created_at DESC LIMIT 1')
+      .get(req.user!.id) as { created_at?: string } | undefined;
+
+    const candidates = [latestScan?.created_at, latestSingle?.created_at, latestParlay?.created_at]
+      .filter(Boolean)
+      .map((v) => String(v));
+    const lastRescanAt = candidates.length > 0 ? candidates.sort().reverse()[0] : null;
+
+    res.json({
+      last_rescan_at: lastRescanAt,
+      source: latestScan?.created_at ? 'scan_health' : 'opportunity_created_at',
+    });
+  });
+
   app.post('/api/arbitrage/calculate', authenticateToken, (req: AuthRequest, res) => {
     const { match_id, jingcai_side, jingcai_market, jingcai_amount, hedge_strategy_name, base_type, integer_unit } = req.body;
     const currentBaseType = parseSingleBaseType(base_type || 'jingcai');
@@ -1304,15 +1355,14 @@ async function startServer() {
       `).run(...[c_w, c_d, c_l, ...(c_h !== undefined ? [JSON.stringify(c_h)] : []), c_rebate, c_share, match_id]);
     })();
     
-    // 闁插秵鏌婇幍顐ｅ伎婵傛鍩勯張杞扮窗
+    // 淇濆瓨璧旂巼鍚庡紓姝ラ噸绠楀鍒╂満浼?
     void CrawlerService.scanOpportunities(req.user!.id).catch((err) => {
       console.error('scanOpportunities failed after update odds:', err);
     });
     
     res.json({ status: 'ok' });
   });
-
-  // 娑撳鏁炵拋鏉跨秿 API
+  // 鎶曟敞璁板綍涓庡巻鍙?API
   app.get('/api/history', authenticateToken, (req: AuthRequest, res) => {
     const records = db.prepare(`
       SELECT br.*, m.home_team, m.away_team, m.league, ao.jingcai_side
@@ -1340,7 +1390,7 @@ async function startServer() {
       expected_profit
     );
     
-    logAction(req.user!.id, req.user!.username, '鐠佹澘缍嶆稉瀣暈', `閹舵洖鍙? ${total_invest}, 妫板嫭婀￠崚鈺傞紟: ${expected_profit}`, req.ip || '');
+    logAction(req.user!.id, req.user!.username, 'history_create', `Create bet record id=${result.lastInsertRowid}, invest=${total_invest}, expected_profit=${expected_profit}`, req.ip || '');
     res.json({ status: 'ok', id: result.lastInsertRowid });
   });
 
@@ -1374,6 +1424,12 @@ async function startServer() {
     settingsMap.hga_username = String(settingsMap.hga_username || '');
     settingsMap.hga_password = String(settingsMap.hga_password || '');
     settingsMap.hga_team_alias_map = String(settingsMap.hga_team_alias_map || hgaMappings.hga_team_alias_map || '');
+    settingsMap.hga_team_alias_pending_suggestions = String(
+      settingsMap.hga_team_alias_pending_suggestions || hgaMappings.hga_team_alias_pending_suggestions || '[]'
+    );
+    settingsMap.hga_team_alias_auto_apply_threshold = Number(
+      settingsMap.hga_team_alias_auto_apply_threshold || hgaMappings.hga_team_alias_auto_apply_threshold || 3
+    );
     settingsMap.hga_team_alias_map_default = String(hgaDefaultTeamAliasMap || '');
     settingsMap.hga_password_configured = hgaStatus.password_configured;
     settingsMap.hga_status = hgaStatus.status;
@@ -1384,8 +1440,68 @@ async function startServer() {
     res.json(settingsMap);
   });
 
+  app.get('/api/arbitrage/settings', authenticateToken, (req: AuthRequest, res) => {
+    const rows = db
+      .prepare(
+        "SELECT key, value FROM system_settings WHERE user_id = ? AND key IN ('default_jingcai_rebate','default_crown_rebate','default_jingcai_share','default_crown_share')"
+      )
+      .all(req.user!.id) as Array<{ key: string; value: string }>;
+    const map = rows.reduce<Record<string, string>>((acc, row) => {
+      acc[row.key] = row.value;
+      return acc;
+    }, {});
+    const jcRebate = Number.parseFloat(map.default_jingcai_rebate || '0.13');
+    const crownRebate = Number.parseFloat(map.default_crown_rebate || '0.02');
+    const jcShare = Number.parseFloat(map.default_jingcai_share || '0');
+    const crownShare = Number.parseFloat(map.default_crown_share || '0');
+    res.json({
+      default_jingcai_rebate: Number.isFinite(jcRebate) ? jcRebate : 0.13,
+      default_crown_rebate: Number.isFinite(crownRebate) ? crownRebate : 0.02,
+      default_jingcai_share: Number.isFinite(jcShare) ? jcShare : 0,
+      default_crown_share: Number.isFinite(crownShare) ? crownShare : 0,
+    });
+  });
+
+  app.post('/api/arbitrage/settings', authenticateToken, async (req: AuthRequest, res) => {
+    const parsePercent = (value: unknown, fallback: number, scale?: number) => {
+      const parsed = Number.parseFloat(String(value ?? fallback));
+      if (!Number.isFinite(parsed)) return fallback;
+      const clamped = Math.min(1, Math.max(0, parsed));
+      if (typeof scale === 'number' && Number.isFinite(scale) && scale >= 0) {
+        const base = 10 ** scale;
+        return Math.round(clamped * base) / base;
+      }
+      return clamped;
+    };
+
+    const nextValues = {
+      // Rebate is configured in percent with 1 decimal in UI (e.g. 13.3%), persisted as ratio with 3 decimals (0.133).
+      default_jingcai_rebate: parsePercent(req.body?.default_jingcai_rebate, 0.13, 3),
+      default_crown_rebate: parsePercent(req.body?.default_crown_rebate, 0.02, 3),
+      default_jingcai_share: parsePercent(req.body?.default_jingcai_share, 0, 3),
+      default_crown_share: parsePercent(req.body?.default_crown_share, 0, 3),
+    } as const;
+
+    db.transaction(() => {
+      for (const key of ARBITRAGE_SETTING_KEYS) {
+        db.prepare('INSERT OR REPLACE INTO system_settings (user_id, key, value) VALUES (?, ?, ?)')
+          .run(req.user!.id, key, String(nextValues[key]));
+      }
+    })();
+
+    try {
+      await CrawlerService.scanOpportunities(req.user!.id);
+    } catch (err: any) {
+      return res.status(500).json({ status: 'failed', message: err?.message || 'arbitrage rescan failed' });
+    }
+    return res.json({ status: 'ok' });
+  });
+
   app.post('/api/settings', authenticateToken, (req: AuthRequest, res) => {
     const values = { ...req.body } as Record<string, any>;
+    for (const key of ARBITRAGE_SETTING_KEYS) {
+      delete values[key];
+    }
     if (!isAdminUser(req.user)) {
       for (const key of ADMIN_ONLY_SETTINGS_KEYS) {
         delete values[key];
@@ -1419,12 +1535,16 @@ async function startServer() {
         try {
           const parsed = JSON.parse(String(values.hga_team_alias_map || '').trim());
           if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            return res.status(400).json({ status: 'failed', message: 'HGA 鐞冮槦鍒悕鏄犲皠蹇呴』鏄?JSON 瀵硅薄' });
+            return res.status(400).json({ status: 'failed', message: 'HGA team alias map must be a valid JSON object' });
           }
           values.hga_team_alias_map = CrawlerService.saveHgaTeamAliasMap(JSON.stringify(parsed, null, 2));
         } catch {
-          return res.status(400).json({ status: 'failed', message: 'HGA 鐞冮槦鍒悕鏄犲皠鏍煎紡鏃犳晥锛岃濉啓 JSON 瀵硅薄' });
+          return res.status(400).json({ status: 'failed', message: 'HGA team alias map parse failed, please submit valid JSON' });
         }
+      }
+      if (values.hga_team_alias_auto_apply_threshold !== undefined) {
+        const parsed = Number.parseInt(String(values.hga_team_alias_auto_apply_threshold || 3), 10);
+        values.hga_team_alias_auto_apply_threshold = Number.isFinite(parsed) ? Math.max(1, Math.min(10, parsed)) : 3;
       }
     }
     db.transaction(() => {
@@ -1434,22 +1554,8 @@ async function startServer() {
       for (const [key, value] of Object.entries(values)) {
         db.prepare('INSERT OR REPLACE INTO system_settings (user_id, key, value) VALUES (?, ?, ?)').run(req.user!.id, key, String(value));
       }
-
-      if (values.default_jingcai_rebate !== undefined) {
-        db.prepare("UPDATE jingcai_odds SET rebate_rate = ? WHERE match_id IN (SELECT match_id FROM matches WHERE status = 'upcoming')").run(values.default_jingcai_rebate);
-      }
-      if (values.default_jingcai_share !== undefined) {
-        db.prepare("UPDATE jingcai_odds SET share_rate = ? WHERE match_id IN (SELECT match_id FROM matches WHERE status = 'upcoming')").run(values.default_jingcai_share);
-      }
-      if (values.default_crown_rebate !== undefined) {
-        db.prepare("UPDATE crown_odds SET rebate_rate = ? WHERE match_id IN (SELECT match_id FROM matches WHERE status = 'upcoming')").run(values.default_crown_rebate);
-      }
-      if (values.default_crown_share !== undefined) {
-        db.prepare("UPDATE crown_odds SET share_rate = ? WHERE match_id IN (SELECT match_id FROM matches WHERE status = 'upcoming')").run(values.default_crown_share);
-      }
     })();
-    
-    CrawlerService.scanOpportunities(req.user!.id).catch(console.error);
+
     CrawlerService.resetHgaMappingCache();
     
     startAutoScan();
@@ -1467,9 +1573,36 @@ async function startServer() {
     } catch (err: any) {
       return res.status(500).json({
         status: 'failed',
-        message: err?.message || 'HGA 鐧诲綍娴嬭瘯澶辫触',
+        message: err?.message || 'HGA test failed',
       });
     }
+  });
+
+  app.post('/api/settings/hga/alias-suggestions/apply', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
+    const trade500Name = String(req.body?.trade500_name || '').trim();
+    const hgaName = String(req.body?.hga_name || '').trim();
+    if (!trade500Name || !hgaName) {
+      return res.status(400).json({ status: 'failed', message: 'trade500_name ? hga_name ??' });
+    }
+    CrawlerService.applyPendingHgaAliasSuggestion(trade500Name, hgaName);
+    return res.json({
+      status: 'ok',
+      hga_team_alias_map: CrawlerService.getHgaMappingSettings().hga_team_alias_map,
+      hga_team_alias_pending_suggestions: CrawlerService.getHgaMappingSettings().hga_team_alias_pending_suggestions,
+    });
+  });
+
+  app.post('/api/settings/hga/alias-suggestions/dismiss', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
+    const trade500Name = String(req.body?.trade500_name || '').trim();
+    const hgaName = String(req.body?.hga_name || '').trim();
+    if (!trade500Name || !hgaName) {
+      return res.status(400).json({ status: 'failed', message: 'trade500_name and hga_name are required' });
+    }
+    CrawlerService.dismissPendingHgaAliasSuggestion(trade500Name, hgaName);
+    return res.json({
+      status: 'ok',
+      hga_team_alias_pending_suggestions: CrawlerService.getHgaMappingSettings().hga_team_alias_pending_suggestions,
+    });
   });
 
   app.post('/api/matches/refresh', authenticateToken, async (req: AuthRequest, res) => {
@@ -1507,7 +1640,7 @@ async function startServer() {
 
   const server = app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    // 閸掓繂顫愬Ο鈩冨珯閻栴剙褰?(娴犲懎缍嬮弫鐗堝祦鎼存挷璐熺粚鐑樻)
+    // Startup check: if matches table is empty, run one initial sync.
     try {
       const count = db.prepare('SELECT COUNT(*) as count FROM matches').get() as any;
       if (count.count === 0) {
@@ -1532,8 +1665,10 @@ async function startServer() {
     }
     nextAutoScanAtMs = 0;
 
-    // 閼奉亜濮╅幍顐ｅ伎闁槒绶敍?    // 1. 閹垫儳鍩岀粻锛勬倞閸涙顔曠純顔炬畱閹殿偅寮块梻鎾閿涘牊鍨ㄩ懓鍛寸帛鐠?60s閿?    // 2. 鐎规碍婀￠悥顒€褰囬弫鐗堝祦
-    // 3. 閻栴剙褰囬崥搴濊礋閹碘偓閺堝绱戦崥顖欑啊閼奉亜濮╅幍顐ｅ伎閻ㄥ嫮鏁ら幋鐤吀缁犳婧€娴?    
+    // Auto scan scheduler notes:
+    // 1. Start timer only when admin enables auto_scan; minimum interval is 60 seconds.
+    // 2. Skip overlapping rounds to avoid concurrent scan conflicts.
+    // 3. Refresh nextAutoScanAtMs after each round for frontend countdown.
     const admin = db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as any;
     if (!admin) return;
 
@@ -1567,8 +1702,11 @@ async function startServer() {
     }, interval * 1000);
   }
 
-  // 閸掓繂顫愰崥顖氬З閼奉亜濮╅幍顐ｅ伎
+  // 鍚姩鑷姩鎵弿瀹氭椂浠诲姟
   startAutoScan();
 }
 
 startServer();
+
+
+

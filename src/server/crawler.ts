@@ -57,6 +57,16 @@ type HgaMatch = {
   handicaps: ExternalHandicap[];
 };
 
+type HgaAliasSuggestion = {
+  trade500_name: string;
+  hga_name: string;
+  source: 'odds_fallback';
+  match_id: string;
+  match_time: string;
+  created_at: string;
+  match_count: number;
+};
+
 const REQUIRED_CROWN_HANDICAP_COUNT = 3;
 const HGA_SESSION_EXPIRED = 'HGA_SESSION_EXPIRED';
 const HGA_ACCOUNT_LOCKED = 'HGA_ACCOUNT_LOCKED';
@@ -122,6 +132,7 @@ const HGA_VER = '2026-03-19-fireicon_142';
 const HGA_FETCH_TIMEOUT_MS = 90000;
 const SYNC_MIN_ROW_RATIO = 0.6;
 const PLAYWRIGHT_FALLBACK_TIMEOUT_MS = 45000;
+const PLAYWRIGHT_CROWN_PATCH_TIMEOUT_MS = 90000;
 const TRADE500_XML_NSPF_URL = 'https://trade.500.com/static/public/jczq/newxml/pl/pl_nspf_2.xml';
 const TRADE500_XML_SPF_URL = 'https://trade.500.com/static/public/jczq/newxml/pl/pl_spf_2.xml';
 const TRADE500_ODDS_XML_HOSTS = ['https://www.500.com', 'https://trade.500.com', 'https://ews.500.com'];
@@ -132,6 +143,8 @@ const ODDS500_OUZHI_URL = 'https://odds.500.com/fenxi/ouzhi-';
 const LIVE500_CROWN_COMPANY_ID = '280';
 const LIVE500_CROWN_FETCH_CONCURRENCY = 4;
 const HGA_TEAM_ALIAS_MAP_FILE = path.resolve(process.cwd(), 'config', 'hga-team-alias-map.json');
+const HGA_PENDING_ALIAS_SUGGESTIONS_KEY = 'hga_team_alias_pending_suggestions';
+const DEFAULT_HGA_ALIAS_AUTO_APPLY_THRESHOLD = 3;
 
 type Trade500XmlRow = {
   date: string;
@@ -271,8 +284,11 @@ export class CrawlerService {
 
   static getHgaMappingSettings() {
     const mappings = this.getHgaMappings();
+    const suggestions = this.getPendingHgaAliasSuggestions();
     return {
       hga_team_alias_map: mappings.teamAliasMapText,
+      hga_team_alias_pending_suggestions: JSON.stringify(suggestions, null, 2),
+      hga_team_alias_auto_apply_threshold: this.getHgaAliasAutoApplyThreshold(),
     };
   }
 
@@ -287,6 +303,61 @@ export class CrawlerService {
     fs.writeFileSync(HGA_TEAM_ALIAS_MAP_FILE, parsed.text, 'utf8');
     this.resetHgaMappingCache();
     return parsed.text;
+  }
+
+  static getPendingHgaAliasSuggestions() {
+    const adminId = this.getAdminUserId();
+    if (!adminId) return [] as HgaAliasSuggestion[];
+    const row = db
+      .prepare('SELECT value FROM system_settings WHERE user_id = ? AND key = ?')
+      .get(adminId, HGA_PENDING_ALIAS_SUGGESTIONS_KEY) as { value?: string } | undefined;
+    return this.parseStoredAliasSuggestions(String(row?.value || ''));
+  }
+
+  static applyPendingHgaAliasSuggestion(trade500Name: string, hgaName: string) {
+    const nextTrade500Name = String(trade500Name || '').trim();
+    const nextHgaName = String(hgaName || '').trim();
+    if (!nextTrade500Name || !nextHgaName) return;
+    const current = this.getHgaMappings();
+    const currentMap = this.parseStoredJsonMap(current.teamAliasMapText, DEFAULT_TEAM_NAME_ALIAS_MAP).map;
+    currentMap[nextTrade500Name] = nextHgaName;
+    const nextText = this.saveHgaTeamAliasMap(JSON.stringify(currentMap, null, 2));
+    const adminId = this.getAdminUserId();
+    if (adminId) {
+      db.prepare('INSERT OR REPLACE INTO system_settings (user_id, key, value) VALUES (?, ?, ?)').run(
+        adminId,
+        'hga_team_alias_map',
+        nextText
+      );
+    }
+    this.dismissPendingHgaAliasSuggestion(nextTrade500Name, nextHgaName);
+    this.resetHgaMappingCache();
+  }
+
+  static dismissPendingHgaAliasSuggestion(trade500Name: string, hgaName: string) {
+    const adminId = this.getAdminUserId();
+    if (!adminId) return;
+    const nextTrade500Name = String(trade500Name || '').trim().toLowerCase();
+    const nextHgaName = String(hgaName || '').trim().toLowerCase();
+    const nextRows = this.getPendingHgaAliasSuggestions().filter(
+      (item) =>
+        item.trade500_name.toLowerCase() !== nextTrade500Name || item.hga_name.toLowerCase() !== nextHgaName
+    );
+    db.prepare('INSERT OR REPLACE INTO system_settings (user_id, key, value) VALUES (?, ?, ?)').run(
+      adminId,
+      HGA_PENDING_ALIAS_SUGGESTIONS_KEY,
+      JSON.stringify(nextRows, null, 2)
+    );
+  }
+
+  static getHgaAliasAutoApplyThreshold() {
+    const adminId = this.getAdminUserId();
+    if (!adminId) return DEFAULT_HGA_ALIAS_AUTO_APPLY_THRESHOLD;
+    const row = db
+      .prepare('SELECT value FROM system_settings WHERE user_id = ? AND key = ?')
+      .get(adminId, 'hga_team_alias_auto_apply_threshold') as { value?: string } | undefined;
+    const parsed = Number.parseInt(String(row?.value || DEFAULT_HGA_ALIAS_AUTO_APPLY_THRESHOLD), 10);
+    return Number.isFinite(parsed) ? Math.max(1, Math.min(10, parsed)) : DEFAULT_HGA_ALIAS_AUTO_APPLY_THRESHOLD;
   }
 
   static async testHgaLogin(input?: { username?: string; password?: string }) {
@@ -409,6 +480,22 @@ export class CrawlerService {
     this.setHgaRuntimeState('failed', nextMessage);
   }
 
+  private static disableHgaByLock(message: string) {
+    const adminId = this.getAdminUserId();
+    const nextMessage = message || '检测到 HGA 账号被锁，系统已自动关闭 HGA 抓取，请稍后解锁后手动重新开启。';
+    if (adminId) {
+      db.prepare('INSERT OR REPLACE INTO system_settings (user_id, key, value) VALUES (?, ?, ?)').run(
+        adminId,
+        'hga_enabled',
+        'false'
+      );
+    }
+    this.hgaLoginBlockedUntil = 0;
+    this.hgaLoginBlockedReason = '';
+    this.hgaRiskBlocked = false;
+    this.setHgaRuntimeState('locked', nextMessage);
+  }
+
   private static isHgaCredentialError(message: string) {
     const text = String(message || '').trim();
     return HGA_CREDENTIAL_ERROR_HINTS.some((hint) => text.includes(hint));
@@ -436,6 +523,114 @@ export class CrawlerService {
     }
   }
 
+  private static parseStoredAliasSuggestions(raw: string) {
+    try {
+      const parsed = JSON.parse(String(raw || '').trim());
+      if (!Array.isArray(parsed)) return [] as HgaAliasSuggestion[];
+      const merged = new Map<string, HgaAliasSuggestion>();
+      for (const item of parsed) {
+        const normalized = {
+          trade500_name: String(item?.trade500_name || '').trim(),
+          hga_name: String(item?.hga_name || '').trim(),
+          source: 'odds_fallback' as const,
+          match_id: String(item?.match_id || '').trim(),
+          match_time: String(item?.match_time || '').trim(),
+          created_at: String(item?.created_at || '').trim(),
+          match_count: Math.max(1, Number.parseInt(String(item?.match_count || '1'), 10) || 1),
+        };
+        if (!normalized.trade500_name || !normalized.hga_name) continue;
+        const key = `${normalized.trade500_name.toLowerCase()}|${normalized.hga_name.toLowerCase()}`;
+        const existing = merged.get(key);
+        if (!existing) {
+          merged.set(key, normalized);
+          continue;
+        }
+        merged.set(key, {
+          ...normalized,
+          match_id: normalized.match_id || existing.match_id,
+          match_time: normalized.match_time || existing.match_time,
+          created_at: normalized.created_at || existing.created_at,
+          match_count: existing.match_count + normalized.match_count,
+        });
+      }
+      return Array.from(merged.values())
+        .sort((a, b) => b.match_count - a.match_count || a.trade500_name.localeCompare(b.trade500_name))
+        .map((item) => ({
+          ...item,
+          match_count: Math.max(1, item.match_count),
+        }));
+    } catch {
+      return [] as HgaAliasSuggestion[];
+    }
+  }
+
+  private static buildBidirectionalAliasLookup(map: Record<string, string>) {
+    const neighbors = new Map<string, Set<string>>();
+    const labels = new Map<string, string>();
+    const touch = (raw: string) => {
+      const normalized = String(raw || '').trim().toLowerCase().replace(/\s+/g, '');
+      if (!normalized) return '';
+      if (!neighbors.has(normalized)) neighbors.set(normalized, new Set());
+      if (!labels.has(normalized)) labels.set(normalized, String(raw || '').trim());
+      return normalized;
+    };
+
+    for (const [left, right] of Object.entries(map || {})) {
+      const a = touch(left);
+      const b = touch(right);
+      if (!a || !b) continue;
+      neighbors.get(a)!.add(b);
+      neighbors.get(b)!.add(a);
+    }
+
+    const visited = new Set<string>();
+    const lookup: Record<string, string> = {};
+    for (const node of neighbors.keys()) {
+      if (visited.has(node)) continue;
+      const queue = [node];
+      const component: string[] = [];
+      visited.add(node);
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        component.push(current);
+        for (const next of neighbors.get(current) || []) {
+          if (visited.has(next)) continue;
+          visited.add(next);
+          queue.push(next);
+        }
+      }
+      const canonical = component
+        .map((key) => labels.get(key) || key)
+        .sort((a, b) => a.length - b.length || a.localeCompare(b))[0];
+      for (const key of component) {
+        lookup[key] = canonical;
+      }
+    }
+    return lookup;
+  }
+
+  private static appendPendingHgaAliasSuggestions(suggestions: HgaAliasSuggestion[]) {
+    if (!Array.isArray(suggestions) || suggestions.length === 0) return;
+    const adminId = this.getAdminUserId();
+    if (!adminId) return;
+    const existing = this.getPendingHgaAliasSuggestions();
+    let merged = this.parseStoredAliasSuggestions(JSON.stringify([...existing, ...suggestions]));
+    const threshold = this.getHgaAliasAutoApplyThreshold();
+    const autoApply = merged.filter((item) => item.match_count >= threshold);
+    for (const item of autoApply) {
+      this.applyPendingHgaAliasSuggestion(item.trade500_name, item.hga_name);
+    }
+    if (autoApply.length > 0) {
+      const autoKeys = new Set(autoApply.map((item) => `${item.trade500_name.toLowerCase()}|${item.hga_name.toLowerCase()}`));
+      merged = merged.filter((item) => !autoKeys.has(`${item.trade500_name.toLowerCase()}|${item.hga_name.toLowerCase()}`));
+    }
+    db.prepare('INSERT OR REPLACE INTO system_settings (user_id, key, value) VALUES (?, ?, ?)').run(
+      adminId,
+      HGA_PENDING_ALIAS_SUGGESTIONS_KEY,
+      JSON.stringify(merged, null, 2)
+    );
+  }
+
   private static getHgaMappings() {
     if (this.hgaMappingCache) return this.hgaMappingCache;
     const adminId = this.getAdminUserId();
@@ -453,7 +648,7 @@ export class CrawlerService {
     const fileRaw = this.readHgaTeamAliasMapFile();
     const teamAlias = this.parseStoredJsonMap(map.hga_team_alias_map || fileRaw, DEFAULT_TEAM_NAME_ALIAS_MAP);
     this.hgaMappingCache = {
-      teamAliasMap: teamAlias.map,
+      teamAliasMap: this.buildBidirectionalAliasLookup(teamAlias.map),
       teamAliasMapText: teamAlias.text,
     };
     return this.hgaMappingCache;
@@ -526,6 +721,9 @@ export class CrawlerService {
     }
 
     db.transaction(() => {
+      // Clear derived opportunity tables first to avoid FK constraints when replacing match rows.
+      db.prepare('DELETE FROM parlay_opportunities').run();
+      db.prepare('DELETE FROM arbitrage_opportunities').run();
       const nowText = formatLocalDbDateTime();
       db.prepare("DELETE FROM crown_odds WHERE match_id NOT LIKE 'manual_%'").run();
       db.prepare("DELETE FROM jingcai_odds WHERE match_id NOT LIKE 'manual_%'").run();
@@ -844,7 +1042,7 @@ export class CrawlerService {
       if (this.hgaLastStatus === 'unknown' || !this.hgaLastMessage) {
         this.setHgaRuntimeState('disabled', 'HGA 抓取已关闭，当前仅使用 Trade500 主链路');
       }
-      return baseMatches;
+      return this.tryPlaywrightCrownPatch(baseMatches, 'hga-disabled');
     }
 
     if (!hgaConfig.username || !hgaConfig.password) {
@@ -859,6 +1057,7 @@ export class CrawlerService {
       console.warn(`HGA risk lock detected, skip HGA fetch: ${this.hgaLoginBlockedReason || 'locked by upstream'}`);
       const withPw = await this.tryPlaywrightFallback(baseMatches, 'hga-locked');
       if (withPw.length > 0) baseMatches = withPw;
+      baseMatches = await this.tryPlaywrightCrownPatch(baseMatches, 'hga-locked');
       const strictBase = strictByHgaHandicapCount(baseMatches);
       console.warn(`Trade500 strict fallback reference: ${strictBase.length}/${baseMatches.length} matches`);
       return baseMatches;
@@ -873,11 +1072,12 @@ export class CrawlerService {
         console.warn('HGA returned 0 matches, fallback to Trade500 primary source');
         const withPw = await this.tryPlaywrightFallback(baseMatches, 'hga-empty');
         if (withPw.length > 0) baseMatches = withPw;
+        baseMatches = await this.tryPlaywrightCrownPatch(baseMatches, 'hga-empty');
         const strictBase = strictByHgaHandicapCount(baseMatches);
         console.warn(`Trade500 strict fallback reference: ${strictBase.length}/${baseMatches.length} matches`);
         return baseMatches;
       }
-      const merged = this.mergeHgaCrownData(baseMatches, hgaMatches);
+      const merged = await this.tryPlaywrightCrownPatch(this.mergeHgaCrownData(baseMatches, hgaMatches), 'hga-partial');
       this.lastFetchMeta.hga_status = 'ok';
       this.lastFetchMeta.merged_count = merged.length;
       this.setHgaRuntimeState('ok', `HGA 抓取成功，返回 ${hgaMatches.length} 场，合并后 ${merged.length} 场`);
@@ -894,8 +1094,7 @@ export class CrawlerService {
       const errText = String(err?.message || '');
       if (errText.includes(HGA_ACCOUNT_LOCKED)) {
         this.lastFetchMeta.hga_status = 'locked';
-        this.hgaRiskBlocked = true;
-        this.setHgaRuntimeState('locked', errText);
+        this.disableHgaByLock(errText.replace(`${HGA_ACCOUNT_LOCKED}:`, '').trim() || errText);
       } else if (errText.includes(HGA_CREDENTIALS_INVALID)) {
         this.lastFetchMeta.hga_status = 'failed';
         this.disableHgaByCredentialFailure(
@@ -910,10 +1109,14 @@ export class CrawlerService {
       if (this.lastFetchMeta.hga_status === 'timeout') {
         const strictBase = strictByHgaHandicapCount(baseMatches);
         console.warn(`Skip Playwright fallback on HGA timeout, keep Trade500 base result: ${strictBase.length}/${baseMatches.length} matches`);
-        return baseMatches;
+        return this.tryPlaywrightCrownPatch(baseMatches, 'hga-timeout');
       }
       const withPw = await this.tryPlaywrightFallback(baseMatches, this.lastFetchMeta.hga_status === 'locked' ? 'hga-locked' : 'hga-failed');
       if (withPw.length > 0) baseMatches = withPw;
+      baseMatches = await this.tryPlaywrightCrownPatch(
+        baseMatches,
+        this.lastFetchMeta.hga_status === 'locked' ? 'hga-locked' : 'hga-failed'
+      );
       const strictBase = strictByHgaHandicapCount(baseMatches);
       console.warn(`Trade500 strict fallback reference: ${strictBase.length}/${baseMatches.length} matches`);
       return baseMatches;
@@ -974,6 +1177,24 @@ export class CrawlerService {
     return Array.isArray(rows) ? rows : [];
   }
 
+  private static async fetchPlaywrightMatchesForDates(dates: string[]): Promise<ExternalMatch[]> {
+    const mod = require('./scraper/playwright-scraper-full.cjs');
+    const scrape = mod?.scrapeFullMatchData;
+    if (typeof scrape !== 'function') return [];
+    const out: ExternalMatch[] = [];
+    const seen = new Set<string>();
+    for (const date of dates) {
+      const rows = await scrape(date);
+      for (const row of Array.isArray(rows) ? rows : []) {
+        const key = String(row?.id || `${row?.homeTeam || ''}|${row?.awayTeam || ''}|${row?.matchTime || ''}`);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(row);
+      }
+    }
+    return out;
+  }
+
   private static mergePlaywrightData(baseMatches: ExternalMatch[], pwMatches: ExternalMatch[]): ExternalMatch[] {
     if (baseMatches.length === 0 || pwMatches.length === 0) return baseMatches;
     const byPair = new Map<string, ExternalMatch[]>();
@@ -1015,6 +1236,70 @@ export class CrawlerService {
       if ((!baseOddsValid && mergedOddsValid) || mergedHandicaps.length > baseHandicapCount) enriched += 1;
       return merged;
     });
+  }
+
+  private static async tryPlaywrightCrownPatch(baseMatches: ExternalMatch[], reason: string): Promise<ExternalMatch[]> {
+    const targets = baseMatches.filter((match) => this.buildHandicaps(match).length < REQUIRED_CROWN_HANDICAP_COUNT).slice(0, 12);
+    if (targets.length === 0) return baseMatches;
+    try {
+      const dates = Array.from(new Set(targets.map((match) => this.normalizeMatchTime(match.matchTime).slice(0, 10)).filter(Boolean)));
+      if (dates.length === 0) return baseMatches;
+      const pwRows = await this.withTimeout(
+        this.fetchPlaywrightMatchesForDates(dates),
+        PLAYWRIGHT_CROWN_PATCH_TIMEOUT_MS,
+        'Playwright crown patch timeout'
+      );
+      if (!Array.isArray(pwRows) || pwRows.length === 0) return baseMatches;
+      const byPair = new Map<string, ExternalMatch[]>();
+      for (const row of pwRows) {
+        const key = `${this.normalizeNameForMatch(row.homeTeam)}|${this.normalizeNameForMatch(row.awayTeam)}`;
+        if (!byPair.has(key)) byPair.set(key, []);
+        byPair.get(key)!.push(row);
+      }
+      for (const list of byPair.values()) {
+        list.sort((a, b) => this.normalizeMatchTime(a.matchTime).localeCompare(this.normalizeMatchTime(b.matchTime)));
+      }
+      let enriched = 0;
+      const merged = baseMatches.map((base) => {
+        if (this.buildHandicaps(base).length >= REQUIRED_CROWN_HANDICAP_COUNT) return base;
+        const key = `${this.normalizeNameForMatch(base.homeTeam)}|${this.normalizeNameForMatch(base.awayTeam)}`;
+        const candidates = byPair.get(key) || [];
+        const chosen =
+          candidates.find((row) => this.normalizeMatchTime(row.matchTime).slice(0, 16) === this.normalizeMatchTime(base.matchTime).slice(0, 16)) ||
+          candidates.find((row) => this.normalizeMatchTime(row.matchTime).slice(0, 10) === this.normalizeMatchTime(base.matchTime).slice(0, 10)) ||
+          null;
+        if (!chosen) return base;
+        const mergedHandicaps = this.getValidCrownHandicaps([
+          ...this.getValidCrownHandicaps(base.crownHandicaps || []),
+          ...this.getValidCrownHandicaps(chosen.crownHandicaps || []),
+          ...this.buildHandicaps(base),
+          ...this.buildHandicaps(chosen),
+        ]);
+        const patched: ExternalMatch = {
+          ...base,
+          crownOdds: this.isValidExternalOdds(base.crownOdds)
+            ? base.crownOdds
+            : chosen.crownOdds || base.crownOdds,
+          crownAsia:
+            this.parseOdds(base.crownAsia?.homeWater) > 0 && this.parseOdds(base.crownAsia?.awayWater) > 0
+              ? base.crownAsia
+              : chosen.crownAsia || base.crownAsia,
+          crownHandicaps: mergedHandicaps,
+        };
+        if ((patched.crownHandicaps || []).length > this.buildHandicaps(base).length) {
+          enriched += 1;
+        }
+        return patched;
+      });
+      if (enriched > 0) {
+        this.lastFetchMeta.playwright_fallback_used = true;
+        console.log(`Playwright crown patch enriched ${enriched}/${targets.length} matches (reason=${reason})`);
+      }
+      return merged;
+    } catch (err: any) {
+      console.warn(`Playwright crown patch skipped: ${err?.message || err}`);
+      return baseMatches;
+    }
   }
 
   private static withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -2344,6 +2629,7 @@ export class CrawlerService {
 
     const selected: HgaMatch[] = [];
     const seen = new Set<string>();
+    const pendingSuggestions: HgaAliasSuggestion[] = [];
     for (const match of targetMatches) {
       const exactKey = this.normalizeMatchPair(match.homeTeam, match.awayTeam);
       const strictCandidates = byPair.get(exactKey) || [];
@@ -2354,12 +2640,41 @@ export class CrawlerService {
           );
       const chosen = this.pickBestHgaCandidate(match, fallbackCandidates) || this.pickLikelyHgaCandidateByOdds(match, hgaMatches);
       if (!chosen || seen.has(chosen.ecid)) continue;
+      if (strictCandidates.length === 0 && fallbackCandidates.length === 0) {
+        pendingSuggestions.push(...this.buildAliasSuggestionsFromMatchedPair(match, chosen));
+      }
       seen.add(chosen.ecid);
       selected.push(chosen);
     }
 
+    this.appendPendingHgaAliasSuggestions(pendingSuggestions);
     console.log(`HGA candidate narrowing kept ${selected.length}/${hgaMatches.length} matches for ${targetMatches.length} base matches`);
     return selected;
+  }
+
+  private static buildAliasSuggestionsFromMatchedPair(match: ExternalMatch, chosen: HgaMatch) {
+    const createdAt = formatLocalDbDateTime();
+    const out: HgaAliasSuggestion[] = [];
+    const pairs: Array<[string | undefined, string | undefined]> = [
+      [match.homeTeam, chosen.homeTeam],
+      [match.awayTeam, chosen.awayTeam],
+    ];
+    for (const [trade500Name, hgaName] of pairs) {
+      const left = String(trade500Name || '').trim();
+      const right = String(hgaName || '').trim();
+      if (!left || !right) continue;
+      if (this.normalizeNameForMatch(left) === this.normalizeNameForMatch(right)) continue;
+      out.push({
+        trade500_name: left,
+        hga_name: right,
+        source: 'odds_fallback',
+        match_id: String(match.id || '').trim(),
+        match_time: String(match.matchTime || '').trim(),
+        created_at: createdAt,
+        match_count: 1,
+      });
+    }
+    return out;
   }
 
   private static pickLikelyHgaCandidateByOdds(oldMatch: ExternalMatch, candidates: HgaMatch[]) {

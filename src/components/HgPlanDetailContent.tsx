@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Card, Col, Empty, Row, Space, Tag, Typography } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
@@ -96,16 +96,19 @@ export interface HgPlanDetailContentProps {
   matchId?: string;
   initialStrategy?: HedgeStrategy | null;
   showTitle?: boolean;
+  onLoaded?: () => void;
 }
 
-const HgPlanDetailContent: React.FC<HgPlanDetailContentProps> = ({ matchId, initialStrategy = null, showTitle = true }) => {
+const HgPlanDetailContent: React.FC<HgPlanDetailContentProps> = ({ matchId, initialStrategy = null, showTitle = true, onLoaded }) => {
   const { message } = App.useApp();
   const [matchInfo, setMatchInfo] = useState<any>(null);
   const [settings, setSettings] = useState<any>(null);
   const [strategy, setStrategy] = useState<HedgeStrategy | null>(initialStrategy);
+  const loadedNotifiedRef = React.useRef(false);
 
   useEffect(() => {
     if (!matchId) return;
+    loadedNotifiedRef.current = false;
     (async () => {
       try {
         const [matchRes, settingRes] = await Promise.all([axios.get(`/api/matches/${matchId}`), axios.get('/api/settings')]);
@@ -113,9 +116,19 @@ const HgPlanDetailContent: React.FC<HgPlanDetailContentProps> = ({ matchId, init
         setSettings(settingRes.data || {});
       } catch {
         message.error('加载 HG 方案详情失败');
+        if (!loadedNotifiedRef.current) {
+          loadedNotifiedRef.current = true;
+          onLoaded?.();
+        }
       }
     })();
   }, [matchId, message]);
+
+  useEffect(() => {
+    if (!matchInfo || loadedNotifiedRef.current) return;
+    loadedNotifiedRef.current = true;
+    onLoaded?.();
+  }, [matchInfo, onLoaded]);
 
   useEffect(() => {
     if (!matchId || initialStrategy) return;
