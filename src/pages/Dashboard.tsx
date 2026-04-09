@@ -370,7 +370,6 @@ const Dashboard: React.FC = () => {
   const [savingArbitrageSettings, setSavingArbitrageSettings] = useState(false);
 
   const fetchArbitrageSettings = async () => {
-    if (!isAdmin) return;
     setArbitrageSettingsLoading(true);
     try {
       let data: any;
@@ -882,7 +881,7 @@ const Dashboard: React.FC = () => {
         </Col>
       </Row>
 
-      {isAdmin ? (
+      {
         <Card
           title="套利参数（返水 / 占比）"
           extra={
@@ -979,7 +978,7 @@ const Dashboard: React.FC = () => {
             </Col>
           </Row>
         </Card>
-      ) : null}
+      }
 
       <Card
         title={
