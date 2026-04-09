@@ -4,13 +4,13 @@ const HOME = '主胜';
 const DRAW = '平';
 const AWAY = '客胜';
 
-const HOME_TOKENS = ['主胜', 'home', 'homewin', 'std_w', 'standard_w'];
-const DRAW_TOKENS = ['平', 'draw', 'std_d', 'standard_d'];
-const AWAY_TOKENS = ['客胜', 'away', 'awaywin', 'std_l', 'standard_l'];
+const HOME_TOKENS = ['主胜', 'home', 'homewin', 'std_w', 'standard_w', '涓昏儨'];
+const DRAW_TOKENS = ['平', 'draw', 'std_d', 'standard_d', '骞?'];
+const AWAY_TOKENS = ['客胜', 'away', 'awaywin', 'std_l', 'standard_l', '瀹㈣儨'];
 
-const HANDICAP_WIN_TOKENS = ['让胜'];
-const HANDICAP_DRAW_TOKENS = ['让平'];
-const HANDICAP_LOSE_TOKENS = ['让负'];
+const HANDICAP_WIN_TOKENS = ['让胜', '璁╄儨'];
+const HANDICAP_DRAW_TOKENS = ['让平', '璁╁钩'];
+const HANDICAP_LOSE_TOKENS = ['让负', '璁╄礋'];
 
 function normalizeText(raw: string) {
   return String(raw || '').replace(/\s+/g, '').trim();

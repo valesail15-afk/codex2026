@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
-import { App, Button, Card, Col, Empty, Modal, Pagination, Progress, Row, Select, Space, Spin, Statistic, Table, Tag, Typography } from 'antd';
-import { CheckCircleOutlined, FireOutlined, RocketOutlined, SyncOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { App, Button, Card, Col, Empty, InputNumber, Modal, Pagination, Progress, Row, Select, Space, Spin, Statistic, Table, Tag, Typography } from 'antd';
+import { CheckCircleOutlined, FireOutlined, RocketOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import dayjs from 'dayjs';
 import { invertHandicap, normalizeCrownTarget, parseCrownBetType } from '../shared/oddsText';
@@ -12,6 +12,13 @@ import HgPlanDetailContent from '../components/HgPlanDetailContent';
 const { Title, Text } = Typography;
 
 type OppType = 'single' | 'parlay' | 'hg';
+
+type ArbitrageSettings = {
+  default_jingcai_rebate: number;
+  default_crown_rebate: number;
+  default_jingcai_share: number;
+  default_crown_share: number;
+};
 
 type MatrixCell = {
   key: string;
@@ -353,6 +360,39 @@ const Dashboard: React.FC = () => {
     type: 'single',
     record: null,
   });
+  const [arbitrageSettings, setArbitrageSettings] = useState<ArbitrageSettings>({
+    default_jingcai_rebate: 0.13,
+    default_crown_rebate: 0.02,
+    default_jingcai_share: 0,
+    default_crown_share: 0,
+  });
+  const [arbitrageSettingsLoading, setArbitrageSettingsLoading] = useState(false);
+  const [savingArbitrageSettings, setSavingArbitrageSettings] = useState(false);
+
+  const fetchArbitrageSettings = async () => {
+    if (!isAdmin) return;
+    setArbitrageSettingsLoading(true);
+    try {
+      let data: any;
+      try {
+        const res = await axios.get('/api/arbitrage/settings');
+        data = res.data;
+      } catch {
+        const fallbackRes = await axios.get('/api/settings');
+        data = fallbackRes.data;
+      }
+      setArbitrageSettings({
+        default_jingcai_rebate: Number(data?.default_jingcai_rebate ?? 0.13),
+        default_crown_rebate: Number(data?.default_crown_rebate ?? 0.02),
+        default_jingcai_share: Number(data?.default_jingcai_share ?? 0),
+        default_crown_share: Number(data?.default_crown_share ?? 0),
+      });
+    } catch {
+      message.error('加载套利参数失败');
+    } finally {
+      setArbitrageSettingsLoading(false);
+    }
+  };
 
   const fetchData = async (targetType: OppType = oppType) => {
     setLoadingByType((prev) => ({ ...prev, [targetType]: true }));
@@ -366,7 +406,7 @@ const Dashboard: React.FC = () => {
 
       if (isAdmin) {
         try {
-          const health = await axios.get('/api/admin/scrape-health', { params: { limit: 20 } });
+          const health = await axios.get('/api/admin/scrape-health', { params: { limit: 10 } });
           setScrapeHealth(health.data || null);
           setScrapeHealthError('');
         } catch {
@@ -382,32 +422,47 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const handleRecalculate = async () => {
-    setCalculating(true);
-    setProgress(0);
-    const timer = window.setInterval(() => {
-      setProgress((prev) => (prev >= 90 ? 90 : prev + 10));
-    }, 150);
-
-    try {
-      await axios.post('/api/arbitrage/rescan');
-      setProgress(100);
-      message.success('重新扫描完成');
-      window.setTimeout(() => {
-        fetchData(oppType);
-        setCalculating(false);
-      }, 300);
-    } catch {
-      message.error('重新扫描失败');
-      setCalculating(false);
-    } finally {
-      window.clearInterval(timer);
-    }
+  const handleSaveArbitrageSettings = async () => {
+    Modal.confirm({
+      title: '保存参数并重算？',
+      content: '保存后会立即重新扫描并更新当前列表。',
+      okText: '保存并重算',
+      cancelText: '取消',
+      onOk: async () => {
+        setSavingArbitrageSettings(true);
+        setCalculating(true);
+        setProgress(0);
+        const timer = window.setInterval(() => {
+          setProgress((prev) => (prev >= 90 ? 90 : prev + 10));
+        }, 150);
+        try {
+          try {
+            await axios.post('/api/arbitrage/settings', arbitrageSettings);
+          } catch {
+            await axios.post('/api/settings', arbitrageSettings);
+          }
+          await axios.post('/api/arbitrage/rescan');
+          setProgress(100);
+          message.success('参数已保存并完成重算');
+          await fetchData(oppType);
+        } catch {
+          message.error('保存或重算失败，请重试');
+        } finally {
+          window.clearInterval(timer);
+          setCalculating(false);
+          setSavingArbitrageSettings(false);
+        }
+      },
+    });
   };
 
   useEffect(() => {
     fetchData(oppType);
   }, [oppType, isAdmin]);
+
+  useEffect(() => {
+    fetchArbitrageSettings();
+  }, [isAdmin]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -827,6 +882,105 @@ const Dashboard: React.FC = () => {
         </Col>
       </Row>
 
+      {isAdmin ? (
+        <Card
+          title="套利参数（返水 / 占比）"
+          extra={
+            <Space>
+              {calculating && <Progress percent={progress} size="small" style={{ width: 180 }} />}
+              <Button
+                type="primary"
+                onClick={handleSaveArbitrageSettings}
+                loading={savingArbitrageSettings}
+                disabled={arbitrageSettingsLoading}
+              >
+                保存并重算
+              </Button>
+            </Space>
+          }
+          style={{ marginBottom: 16 }}
+        >
+          <Row gutter={[16, 16]} align="middle">
+            <Col xs={24} sm={12} md={6}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Text style={{ whiteSpace: 'nowrap' }}>竞彩返水（%）</Text>
+                <InputNumber
+                style={{ flex: 1 }}
+                min={0}
+                max={100}
+                precision={2}
+                value={Number((arbitrageSettings.default_jingcai_rebate * 100).toFixed(2))}
+                disabled={arbitrageSettingsLoading || savingArbitrageSettings}
+                onChange={(value) =>
+                  setArbitrageSettings((prev) => ({
+                    ...prev,
+                    default_jingcai_rebate: Number(value || 0) / 100,
+                  }))
+                }
+              />
+              </div>
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Text style={{ whiteSpace: 'nowrap' }}>皇冠返水（%）</Text>
+                <InputNumber
+                style={{ flex: 1 }}
+                min={0}
+                max={100}
+                precision={2}
+                value={Number((arbitrageSettings.default_crown_rebate * 100).toFixed(2))}
+                disabled={arbitrageSettingsLoading || savingArbitrageSettings}
+                onChange={(value) =>
+                  setArbitrageSettings((prev) => ({
+                    ...prev,
+                    default_crown_rebate: Number(value || 0) / 100,
+                  }))
+                }
+              />
+              </div>
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Text style={{ whiteSpace: 'nowrap' }}>竞彩占比（%）</Text>
+                <InputNumber
+                style={{ flex: 1 }}
+                min={0}
+                max={100}
+                precision={1}
+                value={Number((arbitrageSettings.default_jingcai_share * 100).toFixed(1))}
+                disabled={arbitrageSettingsLoading || savingArbitrageSettings}
+                onChange={(value) =>
+                  setArbitrageSettings((prev) => ({
+                    ...prev,
+                    default_jingcai_share: Number(value || 0) / 100,
+                  }))
+                }
+              />
+              </div>
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Text style={{ whiteSpace: 'nowrap' }}>皇冠占比（%）</Text>
+                <InputNumber
+                style={{ flex: 1 }}
+                min={0}
+                max={100}
+                precision={1}
+                value={Number((arbitrageSettings.default_crown_share * 100).toFixed(1))}
+                disabled={arbitrageSettingsLoading || savingArbitrageSettings}
+                onChange={(value) =>
+                  setArbitrageSettings((prev) => ({
+                    ...prev,
+                    default_crown_share: Number(value || 0) / 100,
+                  }))
+                }
+              />
+              </div>
+            </Col>
+          </Row>
+        </Card>
+      ) : null}
+
       <Card
         title={
           <Space size="large">
@@ -854,14 +1008,6 @@ const Dashboard: React.FC = () => {
             />
           </Space>
         }
-        extra={
-          <Space>
-            {calculating && <Progress percent={progress} size="small" style={{ width: 180 }} />}
-            <Button icon={<SyncOutlined spin={calculating} />} onClick={handleRecalculate} loading={calculating} type="primary">
-              重新扫描
-            </Button>
-          </Space>
-        }
       >
         {oppType === 'single' || oppType === 'hg' ? (
           renderSingleMatrix()
@@ -871,7 +1017,7 @@ const Dashboard: React.FC = () => {
       </Card>
 
       {isAdmin ? (
-        <Card title="抓取健康趋势（最近20轮）" style={{ marginTop: 16 }}>
+        <Card title="抓取健康趋势（最近10轮）" style={{ marginTop: 16 }}>
           {scrapeHealth && Array.isArray(scrapeHealth.rows) && scrapeHealth.rows.length > 0 ? (
             <>
               <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>

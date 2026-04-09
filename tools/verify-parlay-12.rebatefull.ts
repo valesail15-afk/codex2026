@@ -1,4 +1,4 @@
-﻿/* eslint-disable no-console */
+/* eslint-disable no-console */
 
 type Side = 'W' | 'D' | 'L';
 type Market = 'normal' | 'handicap';

@@ -7,11 +7,11 @@ const isProd = process.env.NODE_ENV === 'production';
 const isUnsafe = !jwtSecretFromEnv || jwtSecretFromEnv === 'your-secret-key';
 
 if (isProd && isUnsafe) {
-  throw new Error('JWT_SECRET ?????????????????????????????');
+  throw new Error('生产环境必须设置安全的 JWT_SECRET，禁止使用默认值。');
 }
 
 if (!isProd && isUnsafe) {
-  console.warn('[auth] JWT_SECRET ??????????????????????? JWT_SECRET?');
+  console.warn('[auth] JWT_SECRET 未配置或仍为默认值，请尽快在环境变量中设置安全密钥。');
 }
 
 const JWT_SECRET = isUnsafe ? 'dev-only-jwt-secret-change-me' : jwtSecretFromEnv;
@@ -67,7 +67,7 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
     }
 
     db.prepare('UPDATE user_sessions SET last_activity_at = ? WHERE id = ?').run(formatLocalDbDateTime(), session.id);
-    // 权限以数据库实时角色为准，避免 token 中旧 role 导致越权
+    // 权限以数据库实时角色为准，避免 token 内旧 role 导致越权
     req.user = { id: dbUser.id, username: dbUser.username, role: dbUser.role, sid: payload.sid };
     next();
   });
@@ -93,3 +93,4 @@ export const revokeSession = (sessionId: string) => {
 export const revokeAllUserSessions = (userId: number) => {
   invalidateAllSessions(userId);
 };
+

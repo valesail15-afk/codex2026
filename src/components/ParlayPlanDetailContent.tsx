@@ -113,12 +113,14 @@ export interface ParlayPlanDetailContentProps {
   id?: string;
   initialBaseType?: 'jingcai' | 'crown';
   showTitle?: boolean;
+  onLoaded?: () => void;
 }
 
 const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
   id,
   initialBaseType = 'jingcai',
   showTitle = true,
+  onLoaded,
 }) => {
   const { message } = App.useApp();
   const [baseType, setBaseType] = useState<'jingcai' | 'crown'>(initialBaseType);
@@ -129,6 +131,7 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
   const [selected, setSelected] = useState<HedgeStrategy | null>(null);
   const [settingsMeta, setSettingsMeta] = useState({ jcShare: 0, crownShare: 0, jcRebate: 0.13, crownRebate: 0.02 });
   const [tempSecondCrownOdds, setTempSecondCrownOdds] = useState<Record<string, number>>({});
+  const loadedNotifiedRef = React.useRef(false);
 
   const load = async () => {
     if (!id) return;
@@ -160,6 +163,10 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
       message.error('加载二串一方案失败');
       setRecord(null);
       setSelected(null);
+      if (!loadedNotifiedRef.current) {
+        loadedNotifiedRef.current = true;
+        onLoaded?.();
+      }
     } finally {
       setLoading(false);
     }
@@ -167,11 +174,18 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
 
   useEffect(() => {
     setBaseType(initialBaseType);
+    loadedNotifiedRef.current = false;
   }, [initialBaseType]);
 
   useEffect(() => {
     load();
   }, [id, baseType]);
+
+  useEffect(() => {
+    if (!record || loadedNotifiedRef.current) return;
+    loadedNotifiedRef.current = true;
+    onLoaded?.();
+  }, [record, onLoaded]);
 
   const selectedRate = Number(selected?.min_profit_rate || record?.profit_rate || 0);
   const selectedStrategy = selected || record?.best_strategy || null;
@@ -807,10 +821,10 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
                         </th>
                         <th style={{ border: '1px solid #d9d9d9', background: '#f7f8fa', padding: '10px 8px', width: 82 }} />
                         <th colSpan={3} style={{ border: '1px solid #d9d9d9', background: '#f7f8fa', padding: '10px 8px', textAlign: 'center', fontWeight: 700 }}>
-                          {`竞彩（返水: ${(settingsMeta.jcRebate * 100).toFixed(0)}% ｜ 占比: ${(settingsMeta.jcShare * 100).toFixed(0)}%）`}
+                          {`竞彩（返水: ${(settingsMeta.jcRebate * 100).toFixed(1)}% ｜ 占比: ${(settingsMeta.jcShare * 100).toFixed(1)}%）`}
                         </th>
                         <th colSpan={3} style={{ border: '1px solid #d9d9d9', background: '#f7f8fa', padding: '10px 8px', textAlign: 'center', fontWeight: 700 }}>
-                          {`皇冠（返水: ${(settingsMeta.crownRebate * 100).toFixed(0)}% ｜ 占比: ${(settingsMeta.crownShare * 100).toFixed(0)}%）`}
+                          {`皇冠（返水: ${(settingsMeta.crownRebate * 100).toFixed(1)}% ｜ 占比: ${(settingsMeta.crownShare * 100).toFixed(1)}%）`}
                         </th>
                       </tr>
                       <tr>

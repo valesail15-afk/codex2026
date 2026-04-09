@@ -1,7 +1,7 @@
 ﻿# 馃搵 椤圭洰鏂囨。 - AFK 濂楀埄绯荤粺
 
-> 最后更新：2026-04-04 18:23
-> 版本号：v1.8.54
+> 最后更新：2026-04-08 23:05
+> 版本号：v1.8.60
 > 当前阶段：开发中
 
 ---
@@ -103,6 +103,8 @@ HGA 寮€鍏冲叧闂?-> 鍏堟姄 Trade500 XML 涓婚摼璺?-> 鎸夋瘮璧涙
 | `/api/matches/refresh-status` | GET | 鍚屾鐘舵€併€佸€掕鏃朵笌姣旇禌鍒楄〃灞曠ず妯″紡淇″彿锛堝惈 `hga_enabled`锛?| - | `{remaining_seconds,next_sync_at,hga_enabled,...}` |
 | `/api/settings` | GET | 璇诲彇褰撳墠鐢ㄦ埛璁剧疆锛涚鐞嗗憳棰濆杩斿洖 HGA 鐘舵€併€佸瘑鐮佷笌鏄犲皠 JSON | - | `SettingsMap & HgaStatus` |
 | `/api/settings` | POST | 淇濆瓨褰撳墠鐢ㄦ埛璁剧疆锛涚鐞嗗憳鍙洿鏂?HGA 寮€鍏炽€佽处鍙峰瘑鐮佷笌鏄犲皠 JSON | `settings payload` | `{status}` |
+| /api/arbitrage/settings | GET | 读取主控面板套利参数（返水/占比） | - | {default_jingcai_rebate,default_crown_rebate,default_jingcai_share,default_crown_share} |
+| /api/arbitrage/settings | POST | 独立保存套利参数并同步触发当前用户套利重算 | {default_jingcai_rebate,default_crown_rebate,default_jingcai_share,default_crown_share} | {status} |
 | `/api/settings/hga/test-login` | POST | 绠＄悊鍛樺崟娆℃祴璇?HGA 璐﹀彿瀵嗙爜鐧诲綍/鎽樺彇鑳藉姏锛堜笉瑙﹀彂姝ｅ紡鎶撳彇锛屼笉鍙?HGA 寮€鍏冲奖鍝嶏級 | `{hga_username?,hga_password?}` | `{status,message}` |
 | `/api/arbitrage/opportunities` | GET | 鍗曞満濂楀埄鍒楄〃锛岄檮甯︿富鎺х煩闃佃鍥炬墍闇€绔炲僵/鐨囧啝瀛楁涓庨珮浜敭 | `base_type` | `Opportunity[]` |
 | `/api/arbitrage/parlay-opportunities` | GET | 浜屼覆涓€濂楀埄鍒楄〃锛岄檮甯︿富鎺х煩闃垫墍闇€鐨勪袱鍦烘瘮璧涚珵褰?鐨囧啝鐭╅樀瀛楁涓庨珮浜敭 | `base_type` | `ParlayOpportunity[]` |
@@ -168,6 +170,10 @@ powershell -ExecutionPolicy Bypass -File C:\Users\hl\.codex\skills\project-gover
 |---|---|---|---|
 | v1.8.50 | 2026-04-03 | 将二串一方案弹窗中的第二场皇冠赔率校准内嵌到顶部摘要表格对应赔率单元格中，移除右上角独立校准区域 | M04 |
 | v1.8.49 | 2026-04-03 | 修正二串一方案弹窗顶部矩阵的第二场覆盖底色语义：第二场中奖覆盖统一使用淡绿色，淡蓝色仅保留给只走第一步未进入第二步验证的场景 | M04 |
+| v1.8.58 | 2026-04-05 | 工程锁定清单补充分工：为 L01-L06 指定“主责/协作/验收”负责人，形成可执行责任矩阵 | M02/M05/M06 |
+| v1.8.57 | 2026-04-05 | 工程评审落地：新增“工程锁定清单”，明确抓取覆盖策略、重启后健康检查、比赛列表展示口径和编码治理的测试项、验收标准与负责人位，作为后续迭代的执行基线 | M02/M05/M06 |
+| v1.8.56 | 2026-04-05 | 修复手动/自动同步偶发落库失败：`syncFromExternalScraper` 在替换 `matches` 前先清理 `arbitrage_opportunities` 与 `parlay_opportunities`，消除外键约束导致的 `FOREIGN KEY constraint failed`，确保当日数据可稳定覆盖入库 | M02 |
+| v1.8.55 | 2026-04-05 | 性能优化：将“默认返水/占比”从系统设置迁移到主控面板独立保存；新增 `/api/arbitrage/settings` 接口并在保存时展示重算提示；系统设置保存不再触发套利重算，缓解保存后刷新慢问题 | M02/M05 |
 | v1.8.54 | 2026-04-04 | 修复前端共享赔率文案解析文件异常：`src/shared/oddsText.ts` 被乱码污染后出现语法错误，导致 Vite 预处理阶段无法加载该模块并连带影响主控页编译；现已恢复稳定中文标签与解析逻辑 | M02/M03/M04/M07 |
 | v1.8.48 | 2026-04-03 | 修复后台同步导致服务长时间无响应的问题：在 `syncFromExternalScraper` 的批量用户扫描，以及 `scanOpportunities` 的大计算分段之间主动让出事件循环，缓解 12 个用户串行扫描时 Node 主线程被持续占满导致接口超时的现象 | M02 |
 | v1.8.47 | 2026-04-03 | 修复认证失效后的登出风暴：前端 401 拦截器不再对 `/api/auth/logout` 的 401 二次触发 `logout`，并增加登出中的幂等保护，避免未登录状态下短时间连续刷出大量退出请求 | M01 |
@@ -264,17 +270,35 @@ powershell -ExecutionPolicy Bypass -File C:\Users\hl\.codex\skills\project-gover
 | T32 | 后台同步期间的服务可响应性 | M02 | 运行时测试 | 后台执行 `scanOpportunities` 时，Node 事件循环应能周期性让出，避免整段扫描期间接口完全无响应 | 本次通过独立脚本验证：单用户扫描约 15.9s，期间 `tick` 在 8.6s、15.5s 时已能输出，说明扫描中途已释放事件循环；`npm run lint`、`npm run build` 均通过 | ✅ |
 | T33 | HGA 开启时盘口不混入历史库回填 | M02/M05 | 抓取/展示规则测试 | HGA 开启时比赛列表应只展示本轮真实抓到的皇冠让球盘口，不再把数据库里的历史旧盘口回填进当前批次数据 | 本次已调整 `buildHandicapsWithFallback`：HGA 开启时直接使用本轮盘口结果；本地脚本验证即使旧库里存在 `-0` 盘口，最终仍只保留本轮 `-0/0.5` | ✅ |
 | T33 | 皇冠让球零盘口去重优先级 | M02/M05 | 抓取/回填规则测试 | 当本轮已抓到 Trade500 的 0 盘口而 HGA 当轮未成功时，不应再把历史 HGA 的 `+0/-0` 零盘口回填到同一场比赛里形成重复展示 | 本次已调整旧盘口回填规则：若当前轮主数据已含 0 盘口，则回填阶段直接忽略历史零盘口；待下一轮同步后页面应只保留当前轮零盘口 | ✅ |
+| T34 | HGA 双向别名与待确认映射建议 | M02/M05 | 抓取/设置测试 | HGA 球队别名映射应按双向等价方式参与归一化；当“比赛时间 + 欧赔”兜底命中时，应自动生成待确认映射建议，并支持在映射页一键加入或忽略 | 本次已完成双向别名归一化、待确认建议持久化、以及二级映射页的“加入映射/忽略”操作入口；待结合真实赛事继续沉淀更多 alias | ✅ |
+| T35 | HGA 映射建议计数与自动加入阈值 | M02/M05 | 抓取/设置测试 | 待确认映射建议应记录重复命中次数，并在达到管理员设置阈值后自动加入正式映射 | 本次已新增 `hga_team_alias_auto_apply_threshold` 与建议 `match_count` 累加逻辑，映射页可配置 1-10 次阈值，默认 3 次 | ✅ |
+| T36 | 皇冠 Playwright 定向兜底 | M02 | 抓取流程测试 | HGA 之后仍未补足皇冠盘口的比赛，应只对少数未补全场次按比赛日定向触发 Playwright 兜底，而非全量常开 | 本次本地验证通过：当前 12 场里 Playwright crown patch 已补强 1/7 场未补全比赛，其中 `吉达联合 vs 新未来SC` 已从单主盘口提升到 2 组盘口 | ✅ |
 | T34 | 共享赔率文案解析文件可编译性 | M02/M03/M04/M07 | 构建/页面测试 | `src/shared/oddsText.ts` 应能被主控页和方案详情组件正常导入，不再出现 Vite `Failed to load url /src/shared/oddsText.ts` 预处理报错 | 本次已重建该文件并通过 `npm run lint`、`npm run build` 验证；开发服务重启后应恢复正常热更新与页面加载 | ✅ |
 
 ---
 
 ## 11. 鏂囨。鍚屾妫€鏌?- [x] 妯″潡鐘舵€佸凡鍚屾
 - [x] 鏂囦欢缁撴瀯宸插悓姝?- [x] 娴佺▼閾捐矾宸插悓姝?- [x] 鎺ュ彛璁捐宸插悓姝?- [x] 鏁版嵁妯″瀷宸插悓姝?- [x] 鍙樻洿璁板綍宸插悓姝?- [x] TODO 宸插悓姝?- [x] 娴嬭瘯娓呭崟宸插悓姝?- [x] 鏈€鍚庢洿鏂版椂闂村凡鍒锋柊
+---
 
+## 12. 工程锁定清单
 
+| 编号 | 锁定项 | 测试用例名 | 验收标准 | 负责人 | 状态 |
+|---|---|---|---|---|---|
+| L01 | 同步覆盖策略锁定 | `TC_SYNC_LATEST_BATCH_OVERWRITE` | 当 Trade500 成功时，始终以最新批次覆盖；HGA 失败/超时不阻断覆盖 | 曾哥（主）/ Codex（辅） | ⬜ |
+| L02 | HGA 错误分支锁定 | `TC_HGA_FAILOVER_MATRIX` | 覆盖 timeout / password invalid / locked；行为与口径一致并写入状态 | 曾哥（主）/ Codex（辅） | ⬜ |
+| L03 | 服务重启健康检查 | `TC_BOOT_HEALTHCHECK_ROUTES` | 重启后关键接口（`/api/matches`、`/api/matches/refresh-status`、`/api/arbitrage/settings`）可用，避免旧进程残留误判 | Codex（主）/ 曾哥（验收） | ⬜ |
+| L04 | 比赛列表展示口径锁定 | `TC_MATCHLIST_CROWN_HANDICAP_RENDER` | 列表展示与库内 `c_h` 实际组数一致（上限 3 组），不出现“有数据未展示”的口径偏差 | 曾哥（主）/ Codex（辅） | ⬜ |
+| L05 | 抓取健康日志回放 | `TC_SCRAPE_HEALTH_AUDIT` | 最近 24h 可追溯每轮 `hga_status/base_count/merged_count/duration_ms`，异常可定位 | Codex（主）/ 曾哥（验收） | ⬜ |
+| L06 | 编码治理门禁 | `TC_TEXT_ENCODING_GATE` | 文档与前端中文文案通过编码检查，无乱码新增；CI 门禁可阻断污染提交 | 曾哥（主）/ Codex（辅） | ⬜ |
 
+### 12.1 执行顺序（建议）
+1. L01 + L02（先锁业务口径）
+2. L03（锁运行环境一致性）
+3. L04 + L05（锁可观测与展示一致性）
+4. L06（锁长期治理）
 
-
-
-
+### 12.2 备注
+- 本清单用于后续每次迭代前后的回归对照。
+- 负责人先保留“待分配”，你确认后可按人名/角色补齐。
 

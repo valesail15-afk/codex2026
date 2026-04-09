@@ -23,3 +23,32 @@
   border-color: #1677ff !important;
   color: #fff !important;
 }
+
+.matrix-responsive-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.matrix-responsive-table {
+  min-width: 960px;
+}
+
+.matrix-sticky-first-col {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #fff;
+}
+
+@media (max-width: 768px) {
+  .matrix-responsive-table {
+    min-width: 860px;
+  }
+
+  .matrix-responsive-table th,
+  .matrix-responsive-table td {
+    font-size: 12px !important;
+    padding: 6px 8px !important;
+    line-height: 1.35 !important;
+  }
+}
