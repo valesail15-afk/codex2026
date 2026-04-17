@@ -6,6 +6,54 @@ const ASIA_ODDS_CACHE_TTL_MS = 10 * 60 * 1000;
 const ASIA_ODDS_CONCURRENCY = 3;
 const asiaOddsCache = new Map();
 const asiaOddsInflight = new Map();
+const HANDICAP_TEXT_MAP = {
+  '平手': '0',
+  '半球': '0.5',
+  '一球': '1',
+  '球半': '1.5',
+  '两球': '2',
+  '两球半': '2.5',
+  '平手/半球': '0/0.5',
+  '半球/一球': '0.5/1',
+  '一球/球半': '1/1.5',
+  '球半/两球': '1.5/2',
+  '两球/两球半': '2/2.5',
+};
+
+function normalizeAsianHandicapText(value) {
+  if (!value || value === '-') return '-';
+
+  const cleaned = String(value)
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/[()（）]/g, '')
+    .replace(/盘$/u, '')
+    .replace(/盘口$/u, '')
+    .replace(/[升降]$/u, '');
+
+  let sign = '';
+  let body = cleaned;
+
+  if (body.startsWith('+') || body.startsWith('-')) {
+    sign = body[0];
+    body = body.slice(1);
+  } else if (body.startsWith('受让')) {
+    sign = '+';
+    body = body.slice(2);
+  } else if (body.startsWith('受')) {
+    sign = '+';
+    body = body.slice(1);
+  } else if (body.startsWith('让')) {
+    sign = '-';
+    body = body.slice(1);
+  } else {
+    sign = '-';
+  }
+
+  const mapped = HANDICAP_TEXT_MAP[body] || body;
+  if (!/^\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?$/.test(mapped)) return '-';
+  return `${sign}${mapped}`;
+}
 
 async function scrapeFullMatchData(targetDate = null) {
   let browser = null;
@@ -457,15 +505,15 @@ async function fetchCrownAsiaOddsUncached(context, url) {
       if (crownRows.length > 0) {
         const crownHandicaps = crownRows
           .map((item) => ({
-            type: item.handicap,
+            type: normalizeAsianHandicapText(item.handicap),
             home_odds: Number((item.homeWater || '').replace(/[^0-9.]/g, '')) || 0,
             away_odds: Number((item.awayWater || '').replace(/[^0-9.]/g, '')) || 0,
           }))
-          .filter((item) => item.type && item.home_odds > 0 && item.away_odds > 0);
+          .filter((item) => item.type && item.type !== '-' && item.home_odds > 0 && item.away_odds > 0);
         const crownRow = crownRows[0];
         return {
           homeWater: crownRow.homeWater,
-          handicap: crownRow.handicap,
+          handicap: normalizeAsianHandicapText(crownRow.handicap),
           awayWater: crownRow.awayWater,
           crownHandicaps,
         };
@@ -475,15 +523,15 @@ async function fetchCrownAsiaOddsUncached(context, url) {
       if (firstRow) {
         return {
           homeWater: firstRow.homeWater,
-          handicap: firstRow.handicap,
+          handicap: normalizeAsianHandicapText(firstRow.handicap),
           awayWater: firstRow.awayWater,
           crownHandicaps: [
             {
-              type: firstRow.handicap,
+              type: normalizeAsianHandicapText(firstRow.handicap),
               home_odds: Number((firstRow.homeWater || '').replace(/[^0-9.]/g, '')) || 0,
               away_odds: Number((firstRow.awayWater || '').replace(/[^0-9.]/g, '')) || 0,
             },
-          ].filter((item) => item.type && item.home_odds > 0 && item.away_odds > 0),
+          ].filter((item) => item.type && item.type !== '-' && item.home_odds > 0 && item.away_odds > 0),
         };
       }
 

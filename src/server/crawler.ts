@@ -707,14 +707,26 @@ export class CrawlerService {
     }
 
     if (this.isSameSyncRows(currentRows, stabilizedRows)) {
-      console.log(`External scraper data unchanged, skip database update (${stabilizedRows.length} matches)`);
+      const cleanedHandicapRows = this.cleanupStoredCrownHandicaps();
+      if (cleanedHandicapRows > 0) {
+        const users = db.prepare('SELECT id FROM users').all() as Array<{ id: number }>;
+        for (const user of users) {
+          await this.yieldToEventLoop();
+          await this.scanOpportunities(user.id);
+        }
+        console.log(
+          `External scraper data unchanged, cleaned ${cleanedHandicapRows} persisted crown handicap rows and rescanned opportunities`
+        );
+      } else {
+        console.log(`External scraper data unchanged, skip database update (${stabilizedRows.length} matches)`);
+      }
       this.logScrapeHealth({
         status: 'unchanged',
         fetched_total: rawMatches.length,
         filtered_total: matches.length,
         synced_total: stabilizedRows.length,
         complete_total: matches.filter((m) => this.isMatchComplete(m as any)).length,
-        note: 'same rows',
+        note: cleanedHandicapRows > 0 ? `same rows + handicap cleanup:${cleanedHandicapRows}` : 'same rows',
         duration_ms: Date.now() - startedAt,
       });
       return stabilizedRows.length;
@@ -897,6 +909,37 @@ export class CrawlerService {
       if (normalized.length > 0) map.set(row.match_id, normalized);
     }
     return map;
+  }
+
+  private static cleanupStoredCrownHandicaps() {
+    const rows = db
+      .prepare("SELECT match_id, handicaps FROM crown_odds WHERE match_id NOT LIKE 'manual_%'")
+      .all() as Array<{ match_id: string; handicaps?: string }>;
+    const update = db.prepare('UPDATE crown_odds SET handicaps = ?, updated_at = ? WHERE match_id = ?');
+    const nowText = formatLocalDbDateTime();
+    let cleaned = 0;
+
+    for (const row of rows) {
+      if (!row.match_id) continue;
+
+      let parsed: any = [];
+      try {
+        parsed = row.handicaps ? JSON.parse(row.handicaps) : [];
+      } catch {
+        parsed = [];
+      }
+
+      const source = Array.isArray(parsed) ? parsed : [];
+      const normalized = this.getValidCrownHandicaps(source);
+      const sourceJson = JSON.stringify(source);
+      const normalizedJson = JSON.stringify(normalized);
+      if (sourceJson === normalizedJson) continue;
+
+      update.run(normalizedJson, nowText, row.match_id);
+      cleaned += 1;
+    }
+
+    return cleaned;
   }
 
   private static mergeHandicapCandidates(
@@ -1932,10 +1975,10 @@ export class CrawlerService {
 
   private static buildHandicaps(match: ExternalMatch) {
     if (Array.isArray(match.crownHandicaps) && match.crownHandicaps.length > 0) {
-      return this.getValidCrownHandicaps(match.crownHandicaps);
+      return this.getValidCrownHandicaps(match.crownHandicaps, match);
     }
 
-    const rawHandicap = this.normalizeHandicapV2(match.crownAsia?.handicap);
+    const rawHandicap = this.resolveHandicapType(match.crownAsia?.handicap, match);
     const homeOdds = this.parseOdds(match.crownAsia?.homeWater);
     const awayOdds = this.parseOdds(match.crownAsia?.awayWater);
 
@@ -1943,34 +1986,69 @@ export class CrawlerService {
       return [];
     }
 
-    const normalizedType = /^[+-]/.test(rawHandicap) ? rawHandicap : `${this.inferHomeHandicapSign(match)}${rawHandicap}`;
     return this.getValidCrownHandicaps([
       {
-        type: normalizedType,
+        type: rawHandicap,
         home_odds: homeOdds,
         away_odds: awayOdds,
       },
-    ]);
+    ], match);
   }
 
-  private static getValidCrownHandicaps(items: ExternalHandicap[]) {
+  private static getValidCrownHandicaps(items: ExternalHandicap[], match?: ExternalMatch) {
     const seen = new Set<string>();
+    const seenMirror = new Set<string>();
     const normalized = items
       .filter((item) => item && item.type && item.home_odds > 0 && item.away_odds > 0)
       .map((item) => ({
-        type: this.normalizeHandicapV2(String(item.type || '')) || String(item.type || ''),
+        type: this.resolveHandicapType(String(item.type || ''), match) || String(item.type || ''),
         home_odds: Number(item.home_odds),
         away_odds: Number(item.away_odds),
       }))
       .filter((item) => {
         const key = item.type;
-        if (seen.has(key)) return false;
+        const mirrorKey = key.replace(/^[+-]/, '');
+        // 镜像盘口（如 -0.5 / +0.5）本质同一组，让球仅保留一条，避免重复显示与重复参与计算。
+        if (seen.has(key) || seenMirror.has(mirrorKey)) return false;
         seen.add(key);
+        seenMirror.add(mirrorKey);
         return true;
       });
 
     normalized.sort((a, b) => this.getHandicapSortValue(a.type) - this.getHandicapSortValue(b.type));
     return normalized.slice(0, REQUIRED_CROWN_HANDICAP_COUNT);
+  }
+
+  private static inferHandicapSignFromRaw(value?: string) {
+    if (!value) return '';
+
+    const cleaned = String(value)
+      .trim()
+      .replace(/\s+/g, '')
+      .replace(/[()（）]/g, '')
+      .replace(/[\u5347\u964d]$/u, '');
+
+    if (!cleaned) return '';
+    if (cleaned.startsWith('+')) return '+';
+    if (cleaned.startsWith('-')) return '-';
+    if (cleaned.startsWith('\u53d7\u8ba9')) return '+';
+    if (cleaned.startsWith('\u53d7')) return '+';
+    if (cleaned.startsWith('\u8ba9')) return '-';
+    if (cleaned.includes('\u53d7')) return '+';
+    return '';
+  }
+
+  private static resolveHandicapType(value?: string, match?: ExternalMatch) {
+    const normalized = this.normalizeHandicapV2(value);
+    if (!normalized) return null;
+    if (/^[+-]/.test(normalized)) return normalized;
+
+    const sign =
+      this.inferHandicapSignFromRaw(value) ||
+      this.inferHandicapSignFromRaw(match?.crownAsia?.handicap) ||
+      (match ? this.inferHomeHandicapSign(match) : '');
+
+    return sign ? `${sign}${normalized}` : normalized;
   }
 
   private static getHandicapSortValue(type: string) {
