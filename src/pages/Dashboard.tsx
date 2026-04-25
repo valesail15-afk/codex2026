@@ -1,17 +1,21 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+﻿import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { App, Button, Card, Col, Empty, InputNumber, Modal, Pagination, Progress, Row, Select, Space, Spin, Statistic, Table, Tag, Typography } from 'antd';
 import { CheckCircleOutlined, FireOutlined, RocketOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import dayjs from 'dayjs';
-import { invertHandicap, normalizeCrownTarget, parseCrownBetType } from '../shared/oddsText';
+import { invertHandicap, normalizeCrownTarget } from '../shared/oddsText';
+import { parseCrownBetTypeCompat } from '../shared/crownBetTypeCompat';
 import { AuthContext } from '../App';
 import SinglePlanDetailContent from '../components/SinglePlanDetailContent';
 import ParlayPlanDetailContent from '../components/ParlayPlanDetailContent';
 import HgPlanDetailContent from '../components/HgPlanDetailContent';
+import GoalHedgePlanDetailContent from '../components/GoalHedgePlanDetailContent';
 
 const { Title, Text } = Typography;
 
-type OppType = 'single' | 'parlay' | 'hg';
+type OppType = 'single' | 'parlay' | 'hg' | 'goal_hedge';
+type SingleBaseType = 'jingcai' | 'crown';
+type ParlayBaseType = 'jingcai' | 'crown';
 
 type ArbitrageSettings = {
   default_jingcai_rebate: number;
@@ -73,7 +77,7 @@ const buildHighlightKeys = (record: any) => {
   ];
   for (const bet of crownBets) {
     const normalized = normalizeCrownTarget(String(bet?.type || ''));
-    const parsed = parseCrownBetType(normalized);
+    const parsed = parseCrownBetTypeCompat(normalized);
     const sideKey = parsed.side === 'home' ? 'W' : parsed.side === 'draw' ? 'D' : 'L';
     const handicapLine = normalized.match(/\(([^)]+)\)/)?.[1];
     keys.add(handicapLine ? `crown_ah_${handicapLine}_${sideKey}` : `crown_standard_${sideKey}`);
@@ -175,6 +179,59 @@ const normalizeSingleMatrixRecord = (record: any) => {
 const formatMatrixCell = (cell?: MatrixCell | null) => {
   if (!cell || Number(cell.odds || 0) <= 0) return '-';
   return `${cell.label} @ ${Number(cell.odds).toFixed(2)}`;
+};
+
+const normalizeGoalKey = (value: string) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text.includes('7+') || text.includes('7＋')) return '7+';
+  const m = text.match(/\d+/);
+  return m ? m[0] : text;
+};
+
+const normalizeOuLineKey = (value: string) =>
+  String(value || '')
+    .replace(/\s+/g, '')
+    .replace(/＋/g, '+')
+    .replace(/－/g, '-')
+    .replace(/大|小/g, '');
+
+const parseGoalRows = (raw: any) => {
+  const list = Array.isArray(raw) ? raw : [];
+  return list
+    .map((item: any) => {
+      const label = String(item?.label || '').trim();
+      const odds = Number(item?.odds || 0);
+      if (!label || !Number.isFinite(odds) || odds <= 0) return null;
+      return { label, odds };
+    })
+    .filter(Boolean) as Array<{ label: string; odds: number }>;
+};
+
+const parseOuRows = (raw: any) => {
+  const list = Array.isArray(raw) ? raw : [];
+  const rows: Array<{ side: 'over' | 'under'; line: string; odds: number; label: string }> = [];
+  for (const item of list) {
+    const line = String(item?.line || '').trim();
+    const overOdds = Number(item?.over_odds || 0);
+    const underOdds = Number(item?.under_odds || 0);
+    if (!line) continue;
+    if (Number.isFinite(overOdds) && overOdds > 0) {
+      rows.push({ side: 'over', line, odds: overOdds, label: `大${line}` });
+    }
+    if (Number.isFinite(underOdds) && underOdds > 0) {
+      rows.push({ side: 'under', line, odds: underOdds, label: `小${line}` });
+    }
+  }
+  return rows;
+};
+
+const chunkRows = <T,>(rows: T[], size: number) => {
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) {
+    out.push(rows.slice(i, i + size));
+  }
+  return out;
 };
 
 const buildParlayFallbackCrownHandicap = (prefix: string, raw: any) => {
@@ -342,6 +399,7 @@ const Dashboard: React.FC = () => {
     single: [],
     parlay: [],
     hg: [],
+    goal_hedge: [],
   });
   const [scrapeHealth, setScrapeHealth] = useState<{ stats: any; rows: any[] } | null>(null);
   const [scrapeHealthError, setScrapeHealthError] = useState('');
@@ -349,10 +407,13 @@ const Dashboard: React.FC = () => {
     single: true,
     parlay: true,
     hg: true,
+    goal_hedge: true,
   });
   const [calculating, setCalculating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [oppType, setOppType] = useState<OppType>('single');
+  const [singleBaseType, setSingleBaseType] = useState<SingleBaseType>('jingcai');
+  const [parlayBaseType, setParlayBaseType] = useState<ParlayBaseType>('jingcai');
   const [minProfitFilter, setMinProfitFilter] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [detailModal, setDetailModal] = useState<{ open: boolean; type: OppType; record: any | null }>({
@@ -397,7 +458,14 @@ const Dashboard: React.FC = () => {
     setLoadingByType((prev) => ({ ...prev, [targetType]: true }));
     try {
       const endpoint = targetType === 'parlay' ? '/api/arbitrage/parlay-opportunities' : '/api/arbitrage/opportunities';
-      const baseType = targetType === 'hg' ? 'hg' : 'jingcai';
+      const baseType =
+        targetType === 'hg'
+          ? 'hg'
+          : targetType === 'goal_hedge'
+          ? 'goal_hedge'
+          : targetType === 'parlay'
+          ? parlayBaseType
+          : singleBaseType;
       const res = await axios.get(endpoint, { params: { base_type: baseType } });
       const list = Array.isArray(res.data) ? res.data : [];
       list.sort((a: any, b: any) => (b.profit_rate || 0) - (a.profit_rate || 0));
@@ -457,7 +525,7 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     fetchData(oppType);
-  }, [oppType, isAdmin]);
+  }, [oppType, singleBaseType, parlayBaseType, isAdmin]);
 
   useEffect(() => {
     fetchArbitrageSettings();
@@ -476,7 +544,7 @@ const Dashboard: React.FC = () => {
   );
 
   const singleFiltered = useMemo(() => {
-    if (oppType !== 'single' && oppType !== 'hg') return [] as any[];
+    if (oppType !== 'single' && oppType !== 'hg' && oppType !== 'goal_hedge') return [] as any[];
     const byMatch = new Map<string, any>();
     for (const item of filtered) {
       const matchId = String(item?.match_id || '');
@@ -492,7 +560,7 @@ const Dashboard: React.FC = () => {
   const currentDisplayRecords = oppType === 'parlay' ? filtered : singleFiltered;
 
   const pagedSingleRecords = useMemo(() => {
-    if (oppType !== 'single' && oppType !== 'hg') return [];
+    if (oppType !== 'single' && oppType !== 'hg' && oppType !== 'goal_hedge') return [];
     const start = (currentPage - 1) * PAGE_SIZE;
     return singleFiltered.slice(start, start + PAGE_SIZE).map(normalizeSingleMatrixRecord);
   }, [currentPage, oppType, singleFiltered]);
@@ -700,6 +768,151 @@ const Dashboard: React.FC = () => {
     );
   };
 
+  const renderGoalHedgeMatrix = () => {
+    if (loading) {
+      return (
+        <div style={{ padding: '48px 0', textAlign: 'center' }}>
+          <Spin />
+        </div>
+      );
+    }
+
+    if (pagedSingleRecords.length === 0) {
+      return <Empty description="暂无符合条件的进球对冲机会" />;
+    }
+
+    return (
+      <>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', background: '#fff' }}>
+            <thead>
+              <tr>
+                <th style={{ border: `1px solid ${tableBorder}`, background: headerBg, padding: '14px 10px', width: 190 }}>比赛信息</th>
+                <th colSpan={3} style={{ border: `1px solid ${tableBorder}`, background: headerBg, padding: '14px 10px' }}>竞彩</th>
+                <th colSpan={2} style={{ border: `1px solid ${tableBorder}`, background: headerBg, padding: '14px 10px' }}>皇冠</th>
+                <th style={{ border: `1px solid ${tableBorder}`, background: headerBg, padding: '14px 10px', width: 96 }}>利润</th>
+                <th style={{ border: `1px solid ${tableBorder}`, background: headerBg, padding: '14px 10px', width: 92 }}>利润率</th>
+                <th style={{ border: `1px solid ${tableBorder}`, background: headerBg, padding: '14px 10px', width: 100 }}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedSingleRecords.map((record: any, recordIndex: number) => {
+                const goals = parseGoalRows(record?.c_goal);
+                const ouRows = parseOuRows(record?.c_ou);
+                const goalMatrix = chunkRows(goals, 3);
+                const ouMatrix = chunkRows(ouRows, 2);
+                const rowCount = Math.max(goalMatrix.length || 1, ouMatrix.length || 1);
+                const blockBg = recordIndex % 2 === 1 ? zebraBg : '#fff';
+                const selectedGoalKeys = Array.isArray(record?.best_strategy?.goal_hedge_meta?.goal_picks)
+                  ? record.best_strategy.goal_hedge_meta.goal_picks.map((item: any) => normalizeGoalKey(String(item?.label || item?.goal_index || '')))
+                  : [];
+                const selectedOuLine = normalizeOuLineKey(String(record?.best_strategy?.goal_hedge_meta?.ou_bet?.line || ''));
+                const selectedOuSide = String(record?.best_strategy?.goal_hedge_meta?.ou_bet?.side || '').toLowerCase();
+
+                return (
+                  <React.Fragment key={record.id}>
+                    {Array.from({ length: rowCount }).map((_, rowIdx) => {
+                      const goalRow = goalMatrix[rowIdx] || [];
+                      const ouRow = ouMatrix[rowIdx] || [];
+                      return (
+                        <tr key={`${record.id}_goal_hedge_${rowIdx}`}>
+                          {rowIdx === 0 ? (
+                            <td
+                              rowSpan={rowCount}
+                              style={{ border: `1px solid ${tableBorder}`, padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle', fontSize: 14, lineHeight: 1.55, background: blockBg }}
+                            >
+                              <div>{record.league}</div>
+                              <div style={{ color: teamText }}>{record.home_team}</div>
+                              <div>vs</div>
+                              <div style={{ color: teamText }}>{record.away_team}</div>
+                              <div style={{ color: '#555' }}>{dayjs(record.match_time).format('MM-DD HH:mm')}</div>
+                            </td>
+                          ) : null}
+
+                          {Array.from({ length: 3 }).map((_, colIdx) => {
+                            const item = goalRow[colIdx];
+                            if (!item) {
+                              return <td key={`${record.id}_goal_empty_${rowIdx}_${colIdx}`} style={{ border: `1px solid ${tableBorder}`, padding: '8px 8px', background: blockBg }} />;
+                            }
+                            const active = selectedGoalKeys.includes(normalizeGoalKey(item.label));
+                            return (
+                              <td
+                                key={`${record.id}_goal_${rowIdx}_${colIdx}`}
+                                style={{
+                                  border: `1px solid ${tableBorder}`,
+                                  padding: '8px 8px',
+                                  textAlign: 'center',
+                                  background: active ? highlightBg : blockBg,
+                                  color: active ? highlightText : '#222',
+                                  fontSize: 13,
+                                  fontWeight: active ? 700 : 500,
+                                }}
+                              >
+                                ({item.label}) @{Number(item.odds).toFixed(2)}
+                              </td>
+                            );
+                          })}
+
+                          {Array.from({ length: 2 }).map((_, colIdx) => {
+                            const item = ouRow[colIdx];
+                            if (!item) {
+                              return <td key={`${record.id}_ou_empty_${rowIdx}_${colIdx}`} style={{ border: `1px solid ${tableBorder}`, padding: '8px 8px', background: blockBg }} />;
+                            }
+                            const active =
+                              selectedOuLine &&
+                              selectedOuSide &&
+                              selectedOuLine === normalizeOuLineKey(item.line) &&
+                              selectedOuSide === item.side;
+                            return (
+                              <td
+                                key={`${record.id}_ou_${rowIdx}_${colIdx}`}
+                                style={{
+                                  border: `1px solid ${tableBorder}`,
+                                  padding: '8px 8px',
+                                  textAlign: 'center',
+                                  background: active ? highlightBg : blockBg,
+                                  color: active ? highlightText : '#222',
+                                  fontSize: 13,
+                                  fontWeight: active ? 700 : 500,
+                                }}
+                              >
+                                ({item.label}) @{Number(item.odds).toFixed(2)}
+                              </td>
+                            );
+                          })}
+
+                          {rowIdx === 0 ? (
+                            <>
+                              <td rowSpan={rowCount} style={{ border: `1px solid ${tableBorder}`, padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle', fontSize: 15, fontWeight: 600, background: blockBg }}>
+                                {Number(record.best_strategy?.min_profit || 0).toFixed(2)}
+                              </td>
+                              <td rowSpan={rowCount} style={{ border: `1px solid ${tableBorder}`, padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle', fontSize: 15, fontWeight: 600, color: profitRateText, background: blockBg }}>
+                                {`${((record.profit_rate || 0) * 100).toFixed(2)}%`}
+                              </td>
+                              <td rowSpan={rowCount} style={{ border: `1px solid ${tableBorder}`, padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle', background: blockBg }}>
+                                <Button type="primary" size="small" onClick={() => openDetailModal('goal_hedge', record)} style={{ background: '#1677ff', color: '#fff', borderColor: '#1677ff' }}>
+                                  查看方案
+                                </Button>
+                              </td>
+                            </>
+                          ) : null}
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+          <Pagination current={currentPage} pageSize={PAGE_SIZE} total={singleFiltered.length} onChange={setCurrentPage} showSizeChanger={false} />
+        </div>
+      </>
+    );
+  };
+
   const renderParlayBlock = (
     record: any,
     matchIndex: 1 | 2,
@@ -845,7 +1058,7 @@ const Dashboard: React.FC = () => {
   const modalTitle =
     detailModal.type === 'parlay'
       ? `二串一方案：${detailModal.record?.home_team_1 || ''} vs ${detailModal.record?.away_team_1 || ''} × ${detailModal.record?.home_team_2 || ''} vs ${detailModal.record?.away_team_2 || ''}`
-      : `${detailModal.type === 'hg' ? 'HG对冲方案' : '单场方案'}：${detailModal.record?.home_team || ''} vs ${detailModal.record?.away_team || ''}`;
+      : `${detailModal.type === 'hg' ? 'HG对冲方案' : detailModal.type === 'goal_hedge' ? '进球对冲方案' : '单场方案'}：${detailModal.record?.home_team || ''} vs ${detailModal.record?.away_team || ''}`;
 
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto' }}>
@@ -990,9 +1203,21 @@ const Dashboard: React.FC = () => {
               options={[
                 { value: 'single', label: '单场' },
                 { value: 'hg', label: 'HG对冲' },
+                { value: 'goal_hedge', label: '进球对冲' },
                 { value: 'parlay', label: '二串一' },
               ]}
             />
+            {oppType === 'single' ? (
+              <Select
+                value={singleBaseType}
+                style={{ width: 120 }}
+                onChange={(val) => setSingleBaseType(val)}
+                options={[
+                  { value: 'jingcai', label: '竞彩口径' },
+                  { value: 'crown', label: '皇冠口径' },
+                ]}
+              />
+            ) : null}
             <Select
               value={minProfitFilter}
               style={{ width: 120 }}
@@ -1010,6 +1235,8 @@ const Dashboard: React.FC = () => {
       >
         {oppType === 'single' || oppType === 'hg' ? (
           renderSingleMatrix()
+        ) : oppType === 'goal_hedge' ? (
+          renderGoalHedgeMatrix()
         ) : (
           renderParlayMatrix()
         )}
@@ -1044,10 +1271,15 @@ const Dashboard: React.FC = () => {
                     title: '状态',
                     dataIndex: 'status',
                     key: 'status',
-                    render: (v: string) => <Tag color={v === 'ok' || v === 'unchanged' ? 'green' : v === 'skipped' ? 'orange' : 'red'}>{v}</Tag>,
+                    render: (v: string) => <Tag color={v === 'ok' || v === 'unchanged' ? 'green' : 'red'}>{v}</Tag>,
                   },
                   { title: '场次', key: 'counts', render: (_: any, r: any) => `${r.synced_total}/${r.filtered_total}/${r.fetched_total}` },
-                  { title: 'HGA', dataIndex: 'hga_status', key: 'hga_status' },
+                  {
+                    title: 'HGA',
+                    dataIndex: 'hga_status',
+                    key: 'hga_status',
+                    render: (v: string) => <Tag color={v === 'ok' ? 'green' : 'red'}>{v || '-'}</Tag>,
+                  },
                   { title: '兜底', dataIndex: 'playwright_fallback_used', key: 'playwright_fallback_used', render: (v: number) => (v ? '是' : '否') },
                   { title: '耗时', dataIndex: 'duration_ms', key: 'duration_ms', render: (v: number) => `${v || 0}ms` },
                 ]}
@@ -1073,13 +1305,19 @@ const Dashboard: React.FC = () => {
       >
         {detailModal.record ? (
           detailModal.type === 'parlay' ? (
-            <ParlayPlanDetailContent id={String(detailModal.record.id)} initialBaseType="jingcai" showTitle={false} />
+            <ParlayPlanDetailContent id={String(detailModal.record.id)} initialBaseType={parlayBaseType} showTitle={false} />
           ) : detailModal.type === 'hg' ? (
             <HgPlanDetailContent matchId={detailModal.record.match_id} initialStrategy={detailModal.record?.best_strategy || null} showTitle={false} />
+          ) : detailModal.type === 'goal_hedge' ? (
+            <GoalHedgePlanDetailContent
+              matchId={detailModal.record.match_id}
+              initialStrategy={detailModal.record?.best_strategy || null}
+              showTitle={false}
+            />
           ) : (
             <SinglePlanDetailContent
               matchId={detailModal.record.match_id}
-              initialBaseType="jingcai"
+              initialBaseType={singleBaseType}
               showTitle={false}
             />
           )
@@ -1090,3 +1328,4 @@ const Dashboard: React.FC = () => {
 };
 
 export default Dashboard;
+

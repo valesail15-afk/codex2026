@@ -3,7 +3,8 @@ import { Alert, App, Card, Col, Empty, Form, Row, Select, Space, Table, Tag, Typ
 import { InfoCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import type { HedgeStrategy } from '../types';
-import { invertHandicap, normalizeCrownTarget, parseCrownBetType, parseHandicap } from '../shared/oddsText';
+import { invertHandicap, normalizeCrownTarget, parseHandicap } from '../shared/oddsText';
+import { parseCrownBetTypeCompat } from '../shared/crownBetTypeCompat';
 import { matrixTableStyle, matrixWrapStyle, MATRIX_UI } from '../shared/matrixUi';
 import { OUTCOME_CN, TERMS, currency, signedCurrency } from '../shared/terminology';
 
@@ -15,6 +16,7 @@ type BaseType = 'jingcai' | 'crown';
 
 const rateHot = (r: number) => Number(r || 0) >= 0.005;
 const summaryBlue = '#1677ff';
+const EPS = 1e-6;
 
 const parseCrownHandicapRows = (raw: any) => {
   let parsed = raw;
@@ -46,7 +48,7 @@ const getCrownGrossReturn = (type: string, odds: number, amount: number, dg: num
   const a = Number(amount || 0);
   if (a <= 0 || o <= 0) return 0;
 
-  const bet = parseCrownBetType(type);
+  const bet = parseCrownBetTypeCompat(type);
   const side: Side = bet.side === 'home' ? 'W' : bet.side === 'draw' ? 'D' : 'L';
 
   if (bet.kind === 'std') {
@@ -336,62 +338,155 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
       return outcome === jcSide;
     };
 
-    const buildRow = (key: 'win' | 'draw' | 'lose', dg: number, title: string, color: string) => {
-      const jcStake = Number(getJcAmount(selected) || 0);
-      const jcReturn = jcHit(dg) ? jcStake * Number(jcOdds || 0) : 0;
+    const classifyCrownOutcomeStatus = (
+      parsed: ReturnType<typeof parseCrownBetTypeCompat>,
+      ret: number,
+      amount: number,
+      odds: number
+    ): 'win' | 'half_win' | 'push' | 'half_lose' | 'lose' => {
+      if (ret <= EPS) return 'lose';
+      if (parsed.kind !== 'ah') return 'win';
+      if (Math.abs(ret - amount) <= EPS) return 'push';
+      if (ret < amount - EPS) return 'half_lose';
+      if (ret > amount + EPS && ret < amount * (1 + odds) - EPS) return 'half_win';
+      return 'win';
+    };
 
-      const crownDetails = crownBets.map((b, idx) => {
+    const statusLabel = (status: 'win' | 'half_win' | 'push' | 'half_lose' | 'lose') => {
+      if (status === 'win') return '中';
+      if (status === 'half_win') return '赢半';
+      if (status === 'push') return '走水';
+      if (status === 'half_lose') return '输半';
+      return '亏完';
+    };
+
+    const formatGoalDiff = (dg: number) => {
+      if (dg > 0) return `主胜净胜${dg}球`;
+      if (dg < 0) return `客胜净胜${Math.abs(dg)}球`;
+      return '平局';
+    };
+
+    const outcomeDiffs: Record<'win' | 'draw' | 'lose', number[]> = {
+      win: [1, 2, 3, 4],
+      draw: [0],
+      lose: [-1, -2, -3, -4],
+    };
+
+    const buildRow = (key: 'win' | 'draw' | 'lose', title: string, color: string) => {
+      const dgs = outcomeDiffs[key];
+      const jcStake = Number(getJcAmount(selected) || 0);
+      const stakeLines: Array<{ text: string; amount: number }> = [
+        {
+          text: `竞彩: ${picked?.betLabel || '竞彩'} @ ${Number(jcOdds || 0).toFixed(2)}`,
+          amount: -jcStake,
+        },
+      ];
+      crownBets.forEach((b) => {
         const amount = Number(b.amount || 0);
         const odds = Number(b.odds || 0);
-        const ret = getCrownGrossReturn(String(b.type || ''), odds, amount, dg);
-        return {
-          key: `c_${idx}`,
-          text: `皇冠: ${normalizeCrownTarget(String(b.type || ''))}`,
-          hit: ret > 0,
-          amount: ret,
-        };
+        const target = normalizeCrownTarget(String(b.type || ''));
+        stakeLines.push({
+          text: `皇冠: ${target} @ ${odds.toFixed(2)}`,
+          amount: -amount,
+        });
       });
 
-      const crownReturn = crownDetails.reduce((sum, x) => sum + Number(x.amount || 0), 0);
-      const matchByDetails = jcReturn + crownReturn - invest;
-      const rebateByKey =
-        key === 'win' ? Number(selected.rebates?.win || 0) : key === 'draw' ? Number(selected.rebates?.draw || 0) : Number(selected.rebates?.lose || 0);
-      const matchByStrategy =
-        key === 'win'
-          ? Number(selected.match_profits?.win || 0)
-          : key === 'draw'
-          ? Number(selected.match_profits?.draw || 0)
-          : Number(selected.match_profits?.lose || 0);
-      const totalByStrategy =
-        key === 'win' ? Number(selected.profits?.win || 0) : key === 'draw' ? Number(selected.profits?.draw || 0) : Number(selected.profits?.lose || 0);
+      const buildScenario = (dg: number, cardKey: string, cardTitle: string) => {
+        const jcReturn = jcHit(dg) ? jcStake * Number(jcOdds || 0) : 0;
+        const crownDetails = crownBets.map((b, idx) => {
+          const amount = Number(b.amount || 0);
+          const odds = Number(b.odds || 0);
+          const parsed = parseCrownBetTypeCompat(String(b.type || ''));
+          const ret = getCrownGrossReturn(String(b.type || ''), odds, amount, dg);
+          const status = classifyCrownOutcomeStatus(parsed, ret, amount, odds);
+          return {
+            key: `c_${idx}`,
+            text: `皇冠: ${normalizeCrownTarget(String(b.type || ''))}`,
+            hit: status === 'win' || status === 'half_win',
+            status,
+            statusText: statusLabel(status),
+            amount: ret,
+            settleRatio: status === 'half_win' || status === 'half_lose' ? 0.5 : status === 'push' ? 0 : 1,
+          };
+        });
 
-      const details = [
-        {
-          key: 'jc',
-          text: `竞彩: ${picked?.betLabel || '竞彩'}`,
-          hit: jcReturn > 0,
-          amount: jcReturn,
-        },
-        ...crownDetails,
-      ];
+        const crownReturn = crownDetails.reduce((sum, x) => sum + Number(x.amount || 0), 0);
+        const matchByDetails = jcReturn + crownReturn - invest;
+        const scenarioRebate =
+          jcStake * Number(settingsMeta.jcRebate || 0) +
+          crownDetails.reduce((sum, x) => sum + Number(crownBets[Number(String(x.key).replace('c_', ''))]?.amount || 0) * Number(x.settleRatio || 0) * Number(settingsMeta.crownRebate || 0), 0);
 
-      return {
-        key,
-        title,
-        color,
-        details,
-        match: Number.isFinite(matchByStrategy) ? matchByStrategy : matchByDetails,
-        rebate: Number.isFinite(rebateByKey) ? rebateByKey : Number(selected.rebate || 0),
-        total: Number.isFinite(totalByStrategy) ? totalByStrategy : matchByDetails + rebateByKey,
+        const details = [
+          ...(jcReturn > EPS
+            ? [
+                {
+                  key: 'jc',
+                  text: `竞彩: ${picked?.betLabel || '竞彩'}`,
+                  hit: true,
+                  statusText: '中',
+                  amount: jcReturn,
+                },
+              ]
+            : []),
+          ...crownDetails.filter((d) => d.status === 'win' || d.status === 'half_win'),
+        ];
+
+        return {
+          key: cardKey,
+          title: cardTitle,
+          color,
+          stakeLines,
+          details,
+          match: matchByDetails,
+          rebate: scenarioRebate,
+          total: matchByDetails + scenarioRebate,
+        };
       };
+
+      if (dgs.length <= 1) {
+        const dg = dgs[0];
+        return [buildScenario(dg, `${key}_${dg}`, title)];
+      }
+
+      const signatureByDg = new Map<number, string>();
+      for (const dg of dgs) {
+        const jcSig = jcHit(dg) ? 'jc:hit' : 'jc:miss';
+        const crownSig = crownBets
+          .map((b) => {
+            const parsed = parseCrownBetTypeCompat(String(b.type || ''));
+            const ret = getCrownGrossReturn(String(b.type || ''), Number(b.odds || 0), Number(b.amount || 0), dg);
+            const status = classifyCrownOutcomeStatus(parsed, ret, Number(b.amount || 0), Number(b.odds || 0));
+            return `${String(b.type || '')}:${status}`;
+          })
+          .join('|');
+        signatureByDg.set(dg, `${jcSig}|${crownSig}`);
+      }
+
+      const groups = new Map<string, number[]>();
+      for (const dg of dgs) {
+        const sig = signatureByDg.get(dg) || `dg:${dg}`;
+        if (!groups.has(sig)) groups.set(sig, []);
+        groups.get(sig)!.push(dg);
+      }
+
+      const cards = Array.from(groups.values()).map((group, idx) => {
+        const representative = group[0];
+        const suffix =
+          group.length === 1
+            ? `（${formatGoalDiff(group[0])}）`
+            : `（${group.map((x) => formatGoalDiff(x)).join(' / ')}）`;
+        return buildScenario(representative, `${key}_${idx}_${representative}`, `${title}${suffix}`);
+      });
+
+      return cards;
     };
 
     return [
-      buildRow('win', 1, '主胜', 'blue'),
-      buildRow('draw', 0, '平', 'gold'),
-      buildRow('lose', -1, '客胜', 'red'),
+      ...buildRow('win', '主胜', 'blue'),
+      ...buildRow('draw', '平', 'gold'),
+      ...buildRow('lose', '客胜', 'red'),
     ];
-  }, [currentPickedOption, matchInfo, selected]);
+  }, [currentPickedOption, matchInfo, selected, settingsMeta.crownRebate, settingsMeta.jcRebate]);
 
   const summaryMatrix = useMemo(() => {
     if (!selected || !matchInfo) return null;
@@ -552,7 +647,7 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
 
     (selected.crown_bets || []).forEach((bet) => {
       const normalized = normalizeCrownTarget(String(bet.type || ''));
-      const parsed = parseCrownBetType(normalized);
+      const parsed = parseCrownBetTypeCompat(normalized);
       const side: Side = parsed.side === 'home' ? 'W' : parsed.side === 'draw' ? 'D' : 'L';
       const targetSection = parsed.kind === 'ah' ? handicap.crown : standard.crown;
       const cell = targetSection[side];
@@ -562,11 +657,14 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
       const betRow = betRows.find((row: any) => row.platform === '皇冠' && row.target === normalized && Number(row.amount || 0) === amount);
       appendCurrencyLine(cell, 'stakeLines', amount, '#222');
       appendCurrencyLine(cell, 'stakeLines', Number(betRow?.realAmount || 0), summaryBlue, false, '实投: ');
-      appendCurrencyLine(cell, 'payoutLines', amount * odds, '#222');
+      const grossIfWin = parsed.kind === 'ah' ? amount * (1 + odds) : amount * odds;
+      appendCurrencyLine(cell, 'payoutLines', grossIfWin, '#222');
       const coveredSides = getCrownCoveredSides(normalized, odds, amount);
       mergeCoveredSides(cell, coveredSides);
       appendSignedLine(cell, 'profitLines', Number(outcomeMap[side]?.total || 0), summaryBlue, true);
-      cloneLinesToCoveredCells(targetSection, side, coveredSides, ['payoutLines', 'profitLines']);
+      if (parsed.kind === 'std') {
+        cloneLinesToCoveredCells(targetSection, side, coveredSides, ['payoutLines', 'profitLines']);
+      }
     });
 
     return {
@@ -656,15 +754,12 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
                       { label: '赔率', key: 'oddsLabel', section: 'standard' },
                       { label: TERMS.stake, key: 'stakeLines', section: 'standard' },
                       { label: TERMS.payout, key: 'payoutLines', section: 'standard' },
-                      { label: TERMS.profit, key: 'profitLines', section: 'standard' },
                       { label: '赔率', key: 'oddsLabel', section: 'handicap' },
                       { label: TERMS.stake, key: 'stakeLines', section: 'handicap' },
                       { label: TERMS.payout, key: 'payoutLines', section: 'handicap' },
-                      { label: TERMS.profit, key: 'profitLines', section: 'handicap' },
                     ].map((row, rowIndex) => {
-                      const rowKey = row.key as 'oddsLabel' | 'stakeLines' | 'payoutLines' | 'profitLines';
+                      const rowKey = row.key as 'oddsLabel' | 'stakeLines' | 'payoutLines';
                       const section = row.section === 'standard' ? summaryMatrix.standard : summaryMatrix.handicap;
-                      const mergeableRow = rowKey === 'payoutLines' || rowKey === 'profitLines';
                       const renderCell = (cell: any, cellKey: string, colSpan = 1) => {
                         const lines =
                           rowKey === 'oddsLabel'
@@ -744,16 +839,39 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
                         </div>
                         <div style={{ borderTop: '1px solid #e8e8e8', margin: '10px 0' }} />
 
-                        {(r.details || []).map((d: any, idx: number) => (
+                        {(r.stakeLines || []).map((d: any, idx: number) => (
+                          <div key={`${r.key}_stake_${idx}`} style={{ marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                            <Text style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.text}</Text>
+                            <Text style={{ fontSize: 12, color: '#cf1322', flexShrink: 0 }}>{signedCurrency(d.amount)}</Text>
+                          </div>
+                        ))}
+                        {(r.stakeLines || []).length > 0 ? <div style={{ borderTop: '1px dashed #d9d9d9', margin: '8px 0' }} /> : null}
+
+                        {(r.details || [])
+                          .filter((d: any) => {
+                            const status = String(d?.status || '').toLowerCase();
+                            const text = String(d?.statusText || '');
+                            if (status === 'push' || status === 'half_lose' || status === 'lose') return false;
+                            if (text === '走水' || text === '输半' || text === '不中') return false;
+                            return true;
+                          })
+                          .map((d: any, idx: number) => (
                           <div key={`${r.key}_${idx}`} style={{ marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                             <Text style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.text}</Text>
                             <Text style={{ fontSize: 12, color: Number(d.amount || 0) >= 0 ? '#389e0d' : '#cf1322', flexShrink: 0 }}>
-                              {d.hit ? '中' : '不中'} {signedCurrency(d.amount)}
+                              {d.statusText || (d.hit ? '中' : '不中')} {signedCurrency(d.amount)}
                             </Text>
                           </div>
                         ))}
 
-                        {(r.details || []).length > 0 ? <div style={{ borderTop: '1px dashed #d9d9d9', margin: '8px 0' }} /> : null}
+                        {(r.details || [])
+                          .filter((d: any) => {
+                            const status = String(d?.status || '').toLowerCase();
+                            const text = String(d?.statusText || '');
+                            if (status === 'push' || status === 'half_lose' || status === 'lose') return false;
+                            if (text === '走水' || text === '输半' || text === '不中') return false;
+                            return true;
+                          }).length > 0 ? <div style={{ borderTop: '1px dashed #d9d9d9', margin: '8px 0' }} /> : null}
 
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <Text>胜负收益:</Text>
@@ -800,8 +918,3 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
 };
 
 export default SinglePlanDetailContent;
-
-
-
-
-

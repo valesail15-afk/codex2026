@@ -1,27 +1,33 @@
-import React, { useEffect, useState } from 'react';
-import { App, Button, Card, Col, Divider, Form, Input, InputNumber, Row, Space, Table, Tag, Typography } from 'antd';
-import {
-  ArrowLeftOutlined,
-  CheckOutlined,
-  CloseOutlined,
-  MinusCircleOutlined,
-  PlusOutlined,
-  ReloadOutlined,
-  SaveOutlined,
-} from '@ant-design/icons';
+import React, { useEffect, useMemo, useState } from 'react';
+import { App, Button, Card, Form, Input, InputNumber, Space, Table, Tag, Typography } from 'antd';
+import { ArrowLeftOutlined, CheckOutlined, CloseOutlined, DeleteOutlined, PlusOutlined, SaveOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
 const { Title, Text } = Typography;
 
+const MIN_ALIAS_COL_WIDTH = 128;
+const ORDER_COL_WIDTH = 72;
+const ACTION_COL_WIDTH = 112;
+const EDITOR_MAX_WIDTH = 1320;
+const MAX_ALIAS_COLUMN_COUNT = Math.max(
+  2,
+  Math.floor((EDITOR_MAX_WIDTH - ORDER_COL_WIDTH - ACTION_COL_WIDTH) / MIN_ALIAS_COL_WIDTH)
+);
+const MAX_EXTRA_COLUMNS = Math.max(0, MAX_ALIAS_COLUMN_COUNT - 2);
+
 type HgaAliasRow = {
-  trade500_name: string;
-  hga_name: string;
+  group_id?: string;
+  jingcai_name: string;
+  huangguan_name: string;
+  extra_aliases?: string[];
 };
 
 type HgaAliasSuggestion = {
-  trade500_name: string;
-  hga_name: string;
+  jingcai_name: string;
+  huangguan_name: string;
+  trade500_name?: string;
+  hga_name?: string;
   source?: string;
   match_id?: string;
   match_time?: string;
@@ -29,47 +35,64 @@ type HgaAliasSuggestion = {
   match_count?: number;
 };
 
+type HgaAliasGroup = {
+  group_id: string;
+  canonical: string;
+  aliases: string[];
+};
+
 function parseHgaAliasMap(raw: unknown): HgaAliasRow[] {
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
-    return Object.entries(parsed).map(([trade500_name, hga_name]) => ({
-      trade500_name: String(trade500_name || '').trim(),
-      hga_name: String(hga_name || '').trim(),
+    return Object.entries(parsed).map(([jingcaiName, huangguanName]) => ({
+      jingcai_name: String(jingcaiName || '').trim(),
+      huangguan_name: String(huangguanName || '').trim(),
+      extra_aliases: [],
     }));
   } catch {
     return [];
   }
 }
 
-function buildHgaAliasMap(rows: HgaAliasRow[] = []) {
-  return rows.reduce<Record<string, string>>((acc, row) => {
-    const trade500Name = String(row?.trade500_name || '').trim();
-    const hgaName = String(row?.hga_name || '').trim();
-    if (!trade500Name || !hgaName) return acc;
-    acc[trade500Name] = hgaName;
-    return acc;
-  }, {});
-}
-
-function parseHgaAliasSuggestions(raw: unknown): HgaAliasSuggestion[] {
+function parseTableRows(raw: unknown): HgaAliasRow[] {
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item) => ({
-        trade500_name: String(item?.trade500_name || '').trim(),
-        hga_name: String(item?.hga_name || '').trim(),
-        source: String(item?.source || '').trim(),
-        match_id: String(item?.match_id || '').trim(),
-        match_time: String(item?.match_time || '').trim(),
-        created_at: String(item?.created_at || '').trim(),
-        match_count: Number(item?.match_count || 0) || 0,
-      }))
-      .filter((item) => item.trade500_name && item.hga_name);
+    return parsed.map((item, index) => ({
+      group_id: String(item?.group_id || '').trim() || `group_${index + 1}`,
+      jingcai_name: String(item?.jingcai_name || item?.trade500_name || '').trim(),
+      huangguan_name: String(item?.huangguan_name || item?.hga_name || '').trim(),
+      extra_aliases: Array.isArray(item?.extra_aliases)
+        ? item.extra_aliases.map((alias: unknown) => String(alias || '').trim())
+        : [],
+    }));
   } catch {
     return [];
   }
+}
+
+function normalizeRows(rows: HgaAliasRow[]) {
+  return (Array.isArray(rows) ? rows : []).map((row, index) => ({
+    group_id: String(row?.group_id || '').trim() || `group_${Date.now()}_${index}`,
+    jingcai_name: String(row?.jingcai_name || (row as any)?.trade500_name || '').trim(),
+    huangguan_name: String(row?.huangguan_name || (row as any)?.hga_name || '').trim(),
+    extra_aliases: Array.isArray(row?.extra_aliases) ? row.extra_aliases.map((alias) => String(alias || '').trim()) : [],
+  }));
+}
+
+function buildGroupsFromRows(rows: HgaAliasRow[]): HgaAliasGroup[] {
+  return normalizeRows(rows)
+    .map((row) => {
+      const aliases = [row.jingcai_name, row.huangguan_name, ...row.extra_aliases].map((item) => String(item || '').trim()).filter(Boolean);
+      if (aliases.length === 0) return null;
+      return {
+        group_id: row.group_id!,
+        canonical: aliases.slice().sort((a, b) => a.length - b.length || a.localeCompare(b, 'zh-CN'))[0],
+        aliases,
+      } as HgaAliasGroup;
+    })
+    .filter((item): item is HgaAliasGroup => Boolean(item));
 }
 
 const HgaTeamAliasSettings: React.FC = () => {
@@ -77,56 +100,100 @@ const HgaTeamAliasSettings: React.FC = () => {
   const { message } = App.useApp();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
-  const [defaultRows, setDefaultRows] = useState<HgaAliasRow[]>([]);
   const [pendingSuggestions, setPendingSuggestions] = useState<HgaAliasSuggestion[]>([]);
+  const [extraColumnCount, setExtraColumnCount] = useState(0);
+  const autoApplyThreshold = Form.useWatch('hga_team_alias_auto_apply_threshold', form) || 3;
+
+  const aliasColumnCount = 2 + extraColumnCount;
+  const gridTemplateColumns = useMemo(
+    () => `${ORDER_COL_WIDTH}px repeat(${aliasColumnCount}, minmax(${MIN_ALIAS_COL_WIDTH}px, 1fr)) ${ACTION_COL_WIDTH}px`,
+    [aliasColumnCount]
+  );
 
   const refreshSettings = async () => {
     const res = await axios.get('/api/settings');
     const data = { ...res.data };
+    const tableRows = parseTableRows(data.hga_team_alias_table_rows);
+    const mapRows = parseHgaAliasMap(data.hga_team_alias_map);
+    const nextRows = tableRows.length > 0 ? tableRows : mapRows;
+    const normalized = normalizeRows(nextRows);
     form.setFieldsValue({
-      hga_team_alias_rows: parseHgaAliasMap(data.hga_team_alias_map),
+      hga_team_alias_rows: normalized,
       hga_team_alias_auto_apply_threshold: Number(data.hga_team_alias_auto_apply_threshold || 3),
     });
-    setDefaultRows(parseHgaAliasMap(data.hga_team_alias_map_default));
-    setPendingSuggestions(parseHgaAliasSuggestions(data.hga_team_alias_pending_suggestions));
+    setExtraColumnCount(
+      Math.min(
+        MAX_EXTRA_COLUMNS,
+        normalized.reduce((max, row) => Math.max(max, Array.isArray(row.extra_aliases) ? row.extra_aliases.length : 0), 0)
+      )
+    );
+
+    let pending: HgaAliasSuggestion[] = [];
+    try {
+      const parsed = JSON.parse(String(data.hga_team_alias_pending_suggestions || '[]'));
+      pending = (Array.isArray(parsed) ? parsed : []).map((item: any) => ({
+        ...item,
+        jingcai_name: String(item?.jingcai_name || item?.trade500_name || '').trim(),
+        huangguan_name: String(item?.huangguan_name || item?.hga_name || '').trim(),
+      }));
+    } catch {
+      pending = [];
+    }
+    setPendingSuggestions(pending);
   };
 
   useEffect(() => {
     refreshSettings().catch(() => {
-      message.error('加载 HGA 球队映射失败');
+      message.error('加载球队别名映射失败');
     });
   }, [form, message]);
+
+  const onAddColumn = () => {
+    if (extraColumnCount >= MAX_EXTRA_COLUMNS) {
+      message.warning(`已达到最大新增列数（${MAX_EXTRA_COLUMNS}）`);
+      return;
+    }
+    setExtraColumnCount((prev) => prev + 1);
+  };
 
   const onSave = async (values: { hga_team_alias_rows?: HgaAliasRow[]; hga_team_alias_auto_apply_threshold?: number }) => {
     setLoading(true);
     try {
-      const payload = {
-        hga_team_alias_map: JSON.stringify(buildHgaAliasMap(values.hga_team_alias_rows || []), null, 2),
+      const normalizedRows = normalizeRows(values.hga_team_alias_rows || [])
+        .map((row) => ({ ...row, extra_aliases: row.extra_aliases.slice(0, extraColumnCount) }))
+        .filter((row) => {
+          const aliases = [row.jingcai_name, row.huangguan_name, ...row.extra_aliases].map((item) => String(item || '').trim()).filter(Boolean);
+          return aliases.length > 0;
+        });
+      const groups = buildGroupsFromRows(normalizedRows);
+      await axios.post('/api/settings/hga/alias-groups', {
+        groups,
         hga_team_alias_auto_apply_threshold: Math.max(1, Math.min(10, Number(values.hga_team_alias_auto_apply_threshold || 3))),
-      };
-      await axios.post('/api/settings', payload);
+      });
+      await axios.post('/api/settings', {
+        hga_team_alias_table_rows: JSON.stringify(normalizedRows),
+      });
       await refreshSettings();
-      message.success('HGA 球队映射已保存');
-    } catch {
-      message.error('保存 HGA 球队映射失败');
+      message.success('球队别名映射已保存');
+    } catch (err: any) {
+      const msg = String(err?.response?.data?.message || err?.message || '保存失败');
+      message.error(msg);
     } finally {
       setLoading(false);
     }
   };
 
-  const onResetDefault = () => {
-    form.setFieldValue('hga_team_alias_rows', defaultRows);
-    message.success('已恢复为文件默认映射');
-  };
-
   const onApplySuggestion = async (row: HgaAliasSuggestion) => {
     setLoading(true);
     try {
-      await axios.post('/api/settings/hga/alias-suggestions/apply', row);
+      await axios.post('/api/settings/hga/alias-suggestions/apply', {
+        jingcai_name: row.jingcai_name,
+        huangguan_name: row.huangguan_name,
+      });
       await refreshSettings();
-      message.success('已将建议加入球队别名映射');
-    } catch {
-      message.error('应用映射建议失败');
+      message.success('已加入映射');
+    } catch (err: any) {
+      message.error(String(err?.response?.data?.message || err?.message || '应用映射建议失败'));
     } finally {
       setLoading(false);
     }
@@ -135,7 +202,10 @@ const HgaTeamAliasSettings: React.FC = () => {
   const onDismissSuggestion = async (row: HgaAliasSuggestion) => {
     setLoading(true);
     try {
-      await axios.post('/api/settings/hga/alias-suggestions/dismiss', row);
+      await axios.post('/api/settings/hga/alias-suggestions/dismiss', {
+        jingcai_name: row.jingcai_name,
+        huangguan_name: row.huangguan_name,
+      });
       await refreshSettings();
       message.success('已忽略该映射建议');
     } catch {
@@ -146,80 +216,130 @@ const HgaTeamAliasSettings: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: 1080, margin: '0 auto' }}>
+    <div style={{ maxWidth: EDITOR_MAX_WIDTH, margin: '0 auto' }}>
       <Space direction="vertical" size={20} style={{ width: '100%' }}>
-        <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
-          <Space direction="vertical" size={4}>
-            <Button type="link" icon={<ArrowLeftOutlined />} style={{ paddingInline: 0 }} onClick={() => navigate('/settings')}>
-              返回系统设置
-            </Button>
-            <Title level={3} style={{ margin: 0 }}>
-              HGA 球队别名映射
-            </Title>
-            <Text type="secondary">这里维护 Trade500 与 HGA 的球队别名。匹配成功的兜底建议也会汇总到本页。</Text>
-          </Space>
+        <Space direction="vertical" size={4}>
+          <Button type="link" icon={<ArrowLeftOutlined />} style={{ paddingInline: 0 }} onClick={() => navigate('/settings')}>
+            返回系统设置
+          </Button>
+          <Title level={3} style={{ margin: 0 }}>
+            球队别名映射
+          </Title>
+          <Text type="secondary">默认两列（竞彩/皇冠），可新增别名列；单行只填一个值视为无效。</Text>
         </Space>
 
         <Card className="shadow-sm">
           <Form form={form} layout="vertical" onFinish={onSave}>
-            <Row gutter={16}>
-              <Col xs={24} md={12}>
-                <Form.Item
-                  label="自动加入阈值"
-                  name="hga_team_alias_auto_apply_threshold"
-                  extra="同一组 Trade500/HGA 队名被“时间 + 欧赔”兜底命中达到该次数后，会自动加入正式映射。"
-                >
-                  <InputNumber min={1} max={10} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-            </Row>
+            <Form.Item name="hga_team_alias_auto_apply_threshold" hidden>
+              <InputNumber min={1} max={10} />
+            </Form.Item>
 
-            <Form.Item extra="左侧填写 Trade500 队名，右侧填写 HGA 对应队名。当前匹配逻辑会按双向等价别名处理。">
+            <Form.Item extra={`最多可新增 ${MAX_EXTRA_COLUMNS} 列别名，当前已新增 ${extraColumnCount} 列。`}>
               <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden' }}>
-                <Row gutter={0} style={{ background: '#fafafa', padding: '12px 16px', fontWeight: 600 }}>
-                  <Col span={11}>Trade500</Col>
-                  <Col span={11}>HGA</Col>
-                  <Col span={2} style={{ textAlign: 'right' }}>
-                    操作
-                  </Col>
-                </Row>
-                <div style={{ padding: 16 }}>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns,
+                    gap: 12,
+                    alignItems: 'center',
+                    background: '#fafafa',
+                    padding: '12px 16px',
+                    fontWeight: 600,
+                  }}
+                >
+                  <div>序号</div>
+                  <div>竞彩</div>
+                  <div>皇冠</div>
+                  {Array.from({ length: extraColumnCount }).map((_, idx) => (
+                    <div key={`extra-col-header-${idx}`}>别名{idx + 1}</div>
+                  ))}
+                  <div style={{ textAlign: 'center' }}>
+                    <Space size={4}>
+                      <span>操作</span>
+                      <Button
+                        size="small"
+                        type="text"
+                        icon={<PlusOutlined />}
+                        onClick={onAddColumn}
+                        title="新增列"
+                        disabled={extraColumnCount >= MAX_EXTRA_COLUMNS}
+                      />
+                    </Space>
+                  </div>
+                </div>
+
+                <div style={{ padding: 16, overflowX: 'auto' }}>
                   <Form.List
                     name="hga_team_alias_rows"
                     rules={[
                       {
-                        validator: async (_, rows: HgaAliasRow[] = []) => {
-                          const invalidRow = rows.find((row) => {
-                            const left = String(row?.trade500_name || '').trim();
-                            const right = String(row?.hga_name || '').trim();
-                            return (left && !right) || (!left && right);
+                        validator: async (_, value: HgaAliasRow[] = []) => {
+                          const invalid = value.find((row) => {
+                            const aliasCount = [
+                              String(row?.jingcai_name || '').trim(),
+                              String(row?.huangguan_name || '').trim(),
+                              ...(Array.isArray(row?.extra_aliases) ? row.extra_aliases.map((item) => String(item || '').trim()) : []),
+                            ].filter(Boolean).length;
+                            return aliasCount === 1;
                           });
-                          if (invalidRow) throw new Error('映射行需要同时填写 Trade500 和 HGA 队名');
+                          if (invalid) throw new Error('每行至少填写两个别名，单值行无效');
                         },
                       },
                     ]}
                   >
                     {(fields, { add, remove }, { errors }) => (
                       <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                        {fields.map((field) => (
-                          <Row gutter={12} key={field.key} align="middle">
-                            <Col span={11}>
-                              <Form.Item {...field} name={[field.name, 'trade500_name']} style={{ marginBottom: 0 }}>
-                                <Input placeholder="Trade500 队名" />
+                        {fields.map((field, index) => (
+                          <div
+                            key={field.key}
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns,
+                              gap: 12,
+                              alignItems: 'center',
+                              minWidth: ORDER_COL_WIDTH + ACTION_COL_WIDTH + aliasColumnCount * MIN_ALIAS_COL_WIDTH,
+                            }}
+                          >
+                            <div>
+                              <Text type="secondary">{index + 1}</Text>
+                              <Form.Item {...field} name={[field.name, 'group_id']} hidden>
+                                <Input />
                               </Form.Item>
-                            </Col>
-                            <Col span={11}>
-                              <Form.Item {...field} name={[field.name, 'hga_name']} style={{ marginBottom: 0 }}>
-                                <Input placeholder="HGA 队名" />
+                            </div>
+                            <Form.Item {...field} name={[field.name, 'jingcai_name']} style={{ marginBottom: 0 }}>
+                              <Input placeholder="竞彩队名" />
+                            </Form.Item>
+                            <Form.Item {...field} name={[field.name, 'huangguan_name']} style={{ marginBottom: 0 }}>
+                              <Input placeholder="皇冠队名" />
+                            </Form.Item>
+                            {Array.from({ length: extraColumnCount }).map((_, aliasIdx) => (
+                              <Form.Item
+                                key={`${field.key}-extra-${aliasIdx}`}
+                                {...field}
+                                name={[field.name, 'extra_aliases', aliasIdx]}
+                                style={{ marginBottom: 0 }}
+                              >
+                                <Input placeholder={`别名${aliasIdx + 1}`} />
                               </Form.Item>
-                            </Col>
-                            <Col span={2} style={{ textAlign: 'right' }}>
-                              <Button danger type="text" icon={<MinusCircleOutlined />} onClick={() => remove(field.name)} />
-                            </Col>
-                          </Row>
+                            ))}
+                            <div style={{ textAlign: 'center' }}>
+                              <Button
+                                danger
+                                type="text"
+                                icon={<DeleteOutlined />}
+                                onClick={() => remove(field.name)}
+                                title="删除行"
+                              />
+                            </div>
+                          </div>
                         ))}
-                        <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ trade500_name: '', hga_name: '' })}>
-                          添加映射
+                        <Button
+                          type="dashed"
+                          block
+                          icon={<PlusOutlined />}
+                          onClick={() => add({ jingcai_name: '', huangguan_name: '', extra_aliases: Array(extraColumnCount).fill('') })}
+                        >
+                          底部新增一行
                         </Button>
                         <Form.ErrorList errors={errors} />
                       </Space>
@@ -229,35 +349,49 @@ const HgaTeamAliasSettings: React.FC = () => {
               </div>
             </Form.Item>
 
-            <Divider />
-
-            <Space style={{ justifyContent: 'space-between', width: '100%' }}>
-              <Button icon={<ReloadOutlined />} onClick={onResetDefault} disabled={defaultRows.length === 0}>
-                恢复默认映射
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <Button type="primary" icon={<SaveOutlined />} loading={loading} htmlType="submit">
+                保存
               </Button>
-              <Button type="primary" icon={<SaveOutlined />} htmlType="submit" loading={loading}>
-                保存映射
-              </Button>
-            </Space>
+            </div>
           </Form>
         </Card>
 
-        <Card title={`待确认映射建议（${pendingSuggestions.length}）`} extra={<Text type="secondary">来自时间 + 欧赔兜底命中的保守建议</Text>}>
+        <Card
+          title={`待确认映射建议（${pendingSuggestions.length}）`}
+          extra={
+            <Space size={10} align="center">
+              <Text type="secondary">自动加入阈值</Text>
+              <InputNumber
+                min={1}
+                max={10}
+                value={autoApplyThreshold}
+                onChange={(value) =>
+                  form.setFieldValue('hga_team_alias_auto_apply_threshold', Math.max(1, Math.min(10, Number(value || 3))))
+                }
+                style={{ width: 88 }}
+              />
+              <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={() => form.submit()}>
+                保存
+              </Button>
+            </Space>
+          }
+        >
           <Table<HgaAliasSuggestion>
-            rowKey={(row) => `${row.trade500_name}-${row.hga_name}`}
+            rowKey={(row) => `${row.jingcai_name}-${row.huangguan_name}`}
             pagination={false}
-            locale={{ emptyText: '当前没有待确认的自动映射建议' }}
+            locale={{ emptyText: '当前没有待确认映射建议' }}
             dataSource={pendingSuggestions}
             columns={[
               {
-                title: 'Trade500',
-                dataIndex: 'trade500_name',
-                key: 'trade500_name',
+                title: '竞彩',
+                dataIndex: 'jingcai_name',
+                key: 'jingcai_name',
               },
               {
-                title: 'HGA',
-                dataIndex: 'hga_name',
-                key: 'hga_name',
+                title: '皇冠',
+                dataIndex: 'huangguan_name',
+                key: 'huangguan_name',
               },
               {
                 title: '命中次数',

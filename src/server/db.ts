@@ -129,6 +129,8 @@ export function initDb() {
       draw_odds REAL,
       lose_odds REAL,
       handicaps TEXT, -- JSON string
+      goal_odds TEXT, -- JSON string
+      over_under_odds TEXT, -- JSON string
       rebate_rate REAL DEFAULT 0.02,
       share_rate REAL DEFAULT 0,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -275,6 +277,12 @@ export function initDb() {
   } catch (e) {}
   try {
     db.exec(`ALTER TABLE users ADD COLUMN lock_until DATETIME`);
+  } catch (e) {}
+  try {
+    db.exec(`ALTER TABLE crown_odds ADD COLUMN goal_odds TEXT`);
+  } catch (e) {}
+  try {
+    db.exec(`ALTER TABLE crown_odds ADD COLUMN over_under_odds TEXT`);
   } catch (e) {}
 
   db.exec(`

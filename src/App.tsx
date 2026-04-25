@@ -284,6 +284,8 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const { user, logout, remainingSeconds } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const siderWidth = 200;
+  const siderCollapsedWidth = 80;
 
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -319,7 +321,23 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider collapsible collapsed={collapsed} onCollapse={(value) => setCollapsed(value)} theme="dark">
+      <Sider
+        collapsible
+        collapsed={collapsed}
+        onCollapse={(value) => setCollapsed(value)}
+        theme="dark"
+        width={siderWidth}
+        collapsedWidth={siderCollapsedWidth}
+        style={{
+          position: 'fixed',
+          left: 0,
+          top: 0,
+          bottom: 0,
+          zIndex: 1000,
+          overflow: 'auto',
+          height: '100vh',
+        }}
+      >
         <div
           style={{
             height: 64,
@@ -337,7 +355,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         </div>
         <Menu theme="dark" selectedKeys={[selectedMenuKey]} mode="inline" items={menuItems} />
       </Sider>
-      <Layout>
+      <Layout style={{ marginLeft: collapsed ? siderCollapsedWidth : siderWidth, transition: 'margin-left 0.2s' }}>
         <Header
           style={{
             padding: '0 24px',
@@ -449,4 +467,3 @@ export default function App() {
     </ConfigProvider>
   );
 }
-

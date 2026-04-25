@@ -1,18 +1,26 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { App, Button, Card, Popconfirm, Space, Table, Tag, Typography } from 'antd';
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { App, Card, Space, Table, Tag, Typography } from 'antd';
 import axios from 'axios';
 import dayjs from 'dayjs';
-import MatchModal from '../components/MatchModal';
 
 const { Title, Text } = Typography;
 const responsiveMd: Array<'md'> = ['md'];
-const responsiveLg: Array<'lg'> = ['lg'];
 
 type CrownHandicap = {
   type?: string;
   home_odds?: number;
   away_odds?: number;
+};
+
+type GoalOddsItem = {
+  label?: string;
+  odds?: number;
+};
+
+type OverUnderOddsItem = {
+  line?: string;
+  over_odds?: number;
+  under_odds?: number;
 };
 
 type MatchRow = {
@@ -33,11 +41,15 @@ type MatchRow = {
   c_d?: number;
   c_l?: number;
   c_h?: CrownHandicap[] | CrownHandicap | string | null;
+  c_goal?: GoalOddsItem[] | string | null;
+  c_ou?: OverUnderOddsItem[] | string | null;
 };
 
 type RefreshStatus = {
   auto_scan_enabled?: boolean;
   hga_enabled?: boolean;
+  crown_fetch_status?: 'success' | 'failed' | string;
+  crown_last_fetch_at?: string | null;
   interval_seconds: number;
   last_sync_at: string | null;
   next_sync_at: string | null;
@@ -45,10 +57,12 @@ type RefreshStatus = {
   can_refresh: boolean;
 };
 
-const oddsColorByResult: Record<'win' | 'draw' | 'lose', string> = {
-  win: 'blue',
-  draw: 'gold',
-  lose: 'red',
+type SyncPushPayload = {
+  type?: string;
+  source?: 'auto_scan' | 'initial_sync';
+  has_changes?: boolean;
+  changed_count?: number;
+  refresh_status?: RefreshStatus;
 };
 
 const formatOdds = (value?: number) => {
@@ -62,15 +76,39 @@ const formatMatchTime = (value?: string) => {
   return parsed.isValid() ? parsed.format('MM-DD HH:mm') : value;
 };
 
+const compactHandicapDisplay = (value?: string) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw
+    .split('/')
+    .map((part) => {
+      const text = String(part || '').trim();
+      if (!text) return '';
+      const sign = text.startsWith('+') ? '+' : text.startsWith('-') ? '-' : '';
+      const body = sign ? text.slice(1) : text;
+      const n = Number(body);
+      if (!Number.isFinite(n)) return text;
+      const normalized = Number.isInteger(n) ? String(n) : String(n).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+      return `${sign}${normalized}`;
+    })
+    .join('/');
+};
+
+const formatLeagueShortName = (league?: string) => {
+  const raw = String(league || '').trim();
+  if (!raw) return '-';
+  // 赛事简称优先由后端按体彩 leagueAbbName 写入，这里只做兜底清洗。
+  return raw.replace(/\s+/g, '');
+};
+
 const formatHandicapType = (type?: string) => {
   const text = String(type || '').trim();
   if (!text) return '+0.00';
   const sign = text.startsWith('-') ? '-' : '+';
   const body = text.replace(/^[+-]/, '');
   const parts = body.split('/');
-  if (!parts.every((p) => /^(\d+)(\.\d+)?$/.test(p))) return text;
-  const formatted = parts.map((p) => Number(p).toFixed(2)).join('/');
-  return `${sign}${formatted}`;
+  if (!parts.every((p) => /^\d+(\.\d+)?$/.test(p))) return text;
+  return `${sign}${parts.map((p) => Number(p).toFixed(2)).join('/')}`;
 };
 
 const oppositeHandicapType = (type?: string) => {
@@ -81,39 +119,9 @@ const oppositeHandicapType = (type?: string) => {
   return `+${body}`;
 };
 
-const renderOutcomeTag = (label: string, odds: number | undefined, color: 'win' | 'draw' | 'lose') => {
-  const v = formatOdds(odds);
-  if (v === '-') return <Text type="secondary">-</Text>;
-  return <Tag color={oddsColorByResult[color]}>{`${label} @ ${v}`}</Tag>;
-};
-
-const handicapLabelByOutcome = (outcome: 'win' | 'draw' | 'lose', jcHandicap?: string) => {
-  const line = formatHandicapType(jcHandicap || '0');
-  if (outcome === 'win') return `主胜(${line})`;
-  if (outcome === 'draw') return `平(${line})`;
-  return `客胜(${oppositeHandicapType(line)})`;
-};
-
-const renderJcOutcomeCell = (
-  outcome: 'win' | 'draw' | 'lose',
-  normalLabel: string,
-  normalOdds: number | undefined,
-  handicapOdds: number | undefined,
-  jcHandicap?: string
-) => (
-  <Space direction="vertical" size={4}>
-    {renderOutcomeTag(normalLabel, normalOdds, outcome)}
-    {formatOdds(handicapOdds) !== '-' ? (
-      <Tag color={oddsColorByResult[outcome]} variant="filled" style={{ opacity: 0.7 }}>
-        {`${handicapLabelByOutcome(outcome, jcHandicap)} @ ${formatOdds(handicapOdds)}`}
-      </Tag>
-    ) : null}
-  </Space>
-);
-
 const normalizeCrownHandicaps = (
   input?: CrownHandicap[] | CrownHandicap | string | null,
-  limit = 3
+  limit = Number.MAX_SAFE_INTEGER
 ): CrownHandicap[] => {
   const toNumber = (value: unknown) => {
     const n = Number(value);
@@ -143,8 +151,6 @@ const normalizeCrownHandicaps = (
     for (const raw of parsed) {
       const item = normalizeItem(raw);
       if (!item) continue;
-      // Deduplicate by normalized handicap line only. Odds may vary across refreshes,
-      // but the UI should show one row per handicap type.
       const key = formatHandicapType(item.type);
       if (!uniq.has(key)) uniq.set(key, item);
     }
@@ -155,10 +161,131 @@ const normalizeCrownHandicaps = (
   return single ? [single] : [];
 };
 
-const formatCrownHandicap = (
-  handicaps?: CrownHandicap[] | CrownHandicap | string | null,
-  limit = 3
-) => {
+const normalizeGoalOdds = (input?: GoalOddsItem[] | string | null) => {
+  let parsed: any = input;
+  if (typeof input === 'string') {
+    try {
+      parsed = JSON.parse(input);
+    } catch {
+      parsed = [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [] as GoalOddsItem[];
+  return parsed
+    .map((item: any) => ({
+      label: String(item?.label ?? item?.goal ?? item?.name ?? '').trim(),
+      odds: Number(item?.odds ?? item?.value ?? item?.price ?? 0),
+    }))
+    .filter((item) => item.label && Number.isFinite(item.odds) && item.odds > 0);
+};
+
+const normalizeOverUnderOdds = (input?: OverUnderOddsItem[] | string | null) => {
+  let parsed: any = input;
+  if (typeof input === 'string') {
+    try {
+      parsed = JSON.parse(input);
+    } catch {
+      parsed = [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [] as OverUnderOddsItem[];
+  return parsed
+    .map((item: any) => ({
+      line: String(item?.line ?? item?.type ?? item?.handicap ?? '').trim(),
+      over_odds: Number(item?.over_odds ?? item?.overOdds ?? item?.big_odds ?? 0),
+      under_odds: Number(item?.under_odds ?? item?.underOdds ?? item?.small_odds ?? 0),
+    }))
+    .filter(
+      (item) =>
+        item.line &&
+        Number.isFinite(item.over_odds) &&
+        item.over_odds > 0 &&
+        Number.isFinite(item.under_odds) &&
+        item.under_odds > 0
+    );
+};
+
+const renderOddsTag = (label: string, odds: number | undefined, color: 'blue' | 'gold' | 'red') => {
+  const v = formatOdds(odds);
+  if (v === '-') return <Text type="secondary">-</Text>;
+  return (
+    <Tag color={color} style={{ marginInlineEnd: 0 }}>
+      {`${label} @ ${v}`}
+    </Tag>
+  );
+};
+
+const formatJingcaiOddsBlock = (record: MatchRow) => {
+  const line = formatHandicapType(record.jc_handicap || '0');
+  const oppositeLine = oppositeHandicapType(line);
+  const hasHandicap =
+    formatOdds(record.j_hw) !== '-' || formatOdds(record.j_hd) !== '-' || formatOdds(record.j_hl) !== '-';
+
+  return (
+    <div style={{ lineHeight: 1.5 }}>
+      <div>{renderOddsTag('主胜', record.j_w, 'blue')}</div>
+      <div>{renderOddsTag('平', record.j_d, 'gold')}</div>
+      <div>{renderOddsTag('客胜', record.j_l, 'red')}</div>
+      {hasHandicap ? (
+        <>
+          <div>{renderOddsTag(`主胜(${line})`, record.j_hw, 'blue')}</div>
+          <div>{renderOddsTag(`平(${line})`, record.j_hd, 'gold')}</div>
+          <div>{renderOddsTag(`客胜(${oppositeLine})`, record.j_hl, 'red')}</div>
+        </>
+      ) : null}
+    </div>
+  );
+};
+
+const formatCrownOddsBlock = (record: MatchRow) => (
+  <div style={{ lineHeight: 1.5 }}>
+    <div>{renderOddsTag('主胜', record.c_w, 'blue')}</div>
+    <div>{renderOddsTag('平', record.c_d, 'gold')}</div>
+    <div>{renderOddsTag('客胜', record.c_l, 'red')}</div>
+  </div>
+);
+
+const formatHandicapAlignBlock = (record: MatchRow) => {
+  const hasStandardOdds =
+    formatOdds(record.j_w) !== '-' || formatOdds(record.j_d) !== '-' || formatOdds(record.j_l) !== '-';
+  const hasJcHandicapOdds =
+    formatOdds(record.j_hw) !== '-' || formatOdds(record.j_hd) !== '-' || formatOdds(record.j_hl) !== '-';
+  const stdHandicap = hasStandardOdds ? '0' : '未开售';
+  const jcHandicap = hasJcHandicapOdds ? String(record.jc_handicap || '').trim() || '-' : '未开售';
+  const blank = <span>&nbsp;</span>;
+  return (
+    <div style={{ lineHeight: 1.5 }}>
+      <div>{blank}</div>
+      <div>{stdHandicap}</div>
+      <div>{blank}</div>
+      <div>{blank}</div>
+      <div>{hasJcHandicapOdds ? (jcHandicap || '-') : '未开售'}</div>
+      <div>{blank}</div>
+    </div>
+  );
+};
+
+const formatHandicapAlignBlockV2 = (record: MatchRow) => {
+  const hasStandardOdds =
+    formatOdds(record.j_w) !== '-' || formatOdds(record.j_d) !== '-' || formatOdds(record.j_l) !== '-';
+  const hasJcHandicapOdds =
+    formatOdds(record.j_hw) !== '-' || formatOdds(record.j_hd) !== '-' || formatOdds(record.j_hl) !== '-';
+  const stdHandicap = hasStandardOdds ? '0' : '未开售';
+  const jcHandicap = hasJcHandicapOdds ? compactHandicapDisplay(String(record.jc_handicap || '').trim()) || '-' : '未开售';
+  const blank = <span>&nbsp;</span>;
+  return (
+    <div style={{ lineHeight: 1.5 }}>
+      <div>{blank}</div>
+      <div>{stdHandicap}</div>
+      <div>{blank}</div>
+      <div>{blank}</div>
+      <div>{jcHandicap}</div>
+      <div>{blank}</div>
+    </div>
+  );
+};
+
+const formatCrownHandicap = (handicaps?: CrownHandicap[] | CrownHandicap | string | null, limit = 3) => {
   const normalized = normalizeCrownHandicaps(handicaps, limit);
   if (normalized.length === 0) return '-';
   return (
@@ -169,11 +296,11 @@ const formatCrownHandicap = (
         return (
           <div key={`${homeType}-${index}`} style={{ marginBottom: 2 }}>
             <div>
-              <Text style={{ color: '#000' }}>{`主胜(${homeType})：`}</Text>
+              <Text>{`主胜(${homeType}) @ `}</Text>
               <Text style={{ color: '#1677ff' }}>{formatOdds(item.home_odds)}</Text>
             </div>
             <div>
-              <Text style={{ color: '#000' }}>{`客胜(${awayType})：`}</Text>
+              <Text>{`客胜(${awayType}) @ `}</Text>
               <Text style={{ color: '#ff4d4f' }}>{formatOdds(item.away_odds)}</Text>
             </div>
           </div>
@@ -183,17 +310,52 @@ const formatCrownHandicap = (
   );
 };
 
-const isManualMatch = (match: MatchRow) => String(match.match_id || '').startsWith('manual_');
+const formatGoalOddsBlock = (goalOdds?: GoalOddsItem[] | string | null) => {
+  const rows = normalizeGoalOdds(goalOdds);
+  if (rows.length === 0) return '-';
+  return (
+    <div style={{ lineHeight: 1.5 }}>
+      {rows.map((item, idx) => (
+        <div key={`${item.label}-${idx}`}>
+          <Text>{`（${item.label}）`}</Text>
+          <Text style={{ color: '#1677ff' }}>{formatOdds(item.odds)}</Text>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const formatOverUnderOddsBlock = (ouOdds?: OverUnderOddsItem[] | string | null) => {
+  const rows = normalizeOverUnderOdds(ouOdds);
+  if (rows.length === 0) return '-';
+  return (
+    <div style={{ lineHeight: 1.5 }}>
+      {rows.map((item, idx) => (
+        <div key={`${item.line}-${idx}`} style={{ marginBottom: 2 }}>
+          <div>
+            <Text>{`（大${item.line}）`}</Text>
+            <Text style={{ color: '#1677ff' }}>{formatOdds(item.over_odds)}</Text>
+          </div>
+          <div>
+            <Text>{`（小${item.line}）`}</Text>
+            <Text style={{ color: '#ff4d4f' }}>{formatOdds(item.under_odds)}</Text>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 const MatchList: React.FC = () => {
   const { message } = App.useApp();
   const [matches, setMatches] = useState<MatchRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [isModalVisible, setIsModalVisible] = useState(false);
-  const [editingMatch, setEditingMatch] = useState<MatchRow | null>(null);
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
-  const crownHandicapDisplayLimit = refreshStatus?.hga_enabled === true ? 3 : 1;
+  const [pageSize, setPageSize] = useState(20);
+  const [currentPage, setCurrentPage] = useState(1);
+  const wsRefreshDebounceRef = useRef<number | null>(null);
+  const crownHandicapDisplayLimit = Number.MAX_SAFE_INTEGER;
 
   const fetchMatches = async () => {
     setLoading(true);
@@ -224,6 +386,84 @@ const MatchList: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let closed = false;
+
+    const scheduleMatchesRefresh = () => {
+      if (wsRefreshDebounceRef.current) window.clearTimeout(wsRefreshDebounceRef.current);
+      wsRefreshDebounceRef.current = window.setTimeout(() => {
+        fetchMatches();
+      }, 800);
+    };
+
+    const connect = () => {
+      if (closed) return;
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      socket = new WebSocket(`${wsProtocol}://${window.location.host}/ws/matches`);
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data || '{}') as SyncPushPayload;
+          if (payload.type !== 'sync_update' && payload.type !== 'sync_status') return;
+
+          if (payload.refresh_status) {
+            setRefreshStatus(payload.refresh_status);
+            setRemainingSeconds(Math.max(0, Number(payload.refresh_status?.remaining_seconds || 0)));
+          } else {
+            fetchRefreshStatus();
+          }
+
+          if (payload.type === 'sync_update' && payload.has_changes) {
+            scheduleMatchesRefresh();
+          }
+        } catch {
+          // ignore ws payload parse errors
+        }
+      };
+
+      socket.onopen = () => {
+        fetchRefreshStatus();
+      };
+
+      socket.onclose = () => {
+        if (closed) return;
+        reconnectTimer = window.setTimeout(() => {
+          connect();
+        }, 3000);
+      };
+
+      socket.onerror = () => {
+        try {
+          socket?.close();
+        } catch {
+          // ignore close error
+        }
+      };
+    };
+
+    connect();
+
+    return () => {
+      closed = true;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (wsRefreshDebounceRef.current) window.clearTimeout(wsRefreshDebounceRef.current);
+      try {
+        socket?.close();
+      } catch {
+        // ignore close error
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(matches.length / pageSize));
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [matches.length, pageSize, currentPage]);
+
+  useEffect(() => {
     const countdownTimer = window.setInterval(() => {
       setRemainingSeconds((prev) => (prev > 0 ? prev - 1 : 0));
     }, 1000);
@@ -237,184 +477,114 @@ const MatchList: React.FC = () => {
     };
   }, []);
 
-  const handleCreateOrUpdate = async (values: any) => {
-    try {
-      if (editingMatch?.match_id) {
-        await axios.post('/api/matches/update-odds', { ...values, match_id: editingMatch.match_id });
-        message.success('比赛已更新');
-      } else {
-        await axios.post('/api/matches', values);
-        message.success('比赛添加成功');
-      }
-      setIsModalVisible(false);
-      setEditingMatch(null);
-      fetchMatches();
-    } catch {
-      message.error(editingMatch ? '比赛更新失败' : '比赛添加失败');
-    }
-  };
-
-  const handleDelete = async (matchId: string) => {
-    try {
-      await axios.delete(`/api/matches/${matchId}`);
-      message.success('比赛已删除');
-      fetchMatches();
-    } catch {
-      message.error('删除失败');
-    }
-  };
-
   const columns = useMemo(
     () => [
       {
         title: '赛事',
         dataIndex: 'league',
         key: 'league',
-        width: 86,
+        width: 120,
         ellipsis: true,
         render: (text: string) => (
-          <Tag color="volcano" style={{ marginInlineEnd: 0 }}>
-            {text || '-'}
+          <Tag color="volcano" style={{ marginInlineEnd: 0 }} title={text || '-'}>
+            {formatLeagueShortName(text)}
           </Tag>
         ),
       },
-      { title: '比赛时间', dataIndex: 'match_time', key: 'match_time', width: 92, render: (value: string) => formatMatchTime(value) },
-      { title: '主队', dataIndex: 'home_team', key: 'home_team', width: 104, ellipsis: true, render: (text: string) => text || '-' },
-      { title: '客队', dataIndex: 'away_team', key: 'away_team', width: 104, ellipsis: true, render: (text: string) => text || '-' },
+      { title: '比赛时间', dataIndex: 'match_time', key: 'match_time', width: 120, render: (value: string) => formatMatchTime(value) },
+      { title: '主队', dataIndex: 'home_team', key: 'home_team', width: 130, ellipsis: true, render: (text: string) => text || '-' },
+      { title: '客队', dataIndex: 'away_team', key: 'away_team', width: 130, ellipsis: true, render: (text: string) => text || '-' },
       {
         title: '让球',
         key: 'handicap_group',
-        width: 92,
+        width: 100,
         responsive: responsiveMd,
-        render: (record: MatchRow) => (
-          <div style={{ lineHeight: 1.4 }}>
-            <div>{record.handicap || '-'}</div>
-            <div>{record.jc_handicap || '-'}</div>
-          </div>
-        ),
+        render: (record: MatchRow) => formatHandicapAlignBlockV2(record),
       },
       {
-        title: '竞彩胜',
-        key: 'j_w_group',
-        width: 132,
-        render: (record: MatchRow) => renderJcOutcomeCell('win', '主胜', record.j_w, record.j_hw, record.jc_handicap),
+        title: '竞彩',
+        key: 'jc_triplet',
+        width: 210,
+        render: (record: MatchRow) => formatJingcaiOddsBlock(record),
       },
       {
-        title: '竞彩平',
-        key: 'j_d_group',
-        width: 132,
-        render: (record: MatchRow) => renderJcOutcomeCell('draw', '平', record.j_d, record.j_hd, record.jc_handicap),
-      },
-      {
-        title: '竞彩负',
-        key: 'j_l_group',
-        width: 132,
-        render: (record: MatchRow) => renderJcOutcomeCell('lose', '客胜', record.j_l, record.j_hl, record.jc_handicap),
-      },
-      {
-        title: '皇冠胜',
-        dataIndex: 'c_w',
-        key: 'c_w',
-        width: 110,
-        responsive: responsiveLg,
-        render: (value: number) => renderOutcomeTag('主胜', value, 'win'),
-      },
-      {
-        title: '皇冠平',
-        dataIndex: 'c_d',
-        key: 'c_d',
-        width: 110,
-        responsive: responsiveLg,
-        render: (value: number) => renderOutcomeTag('平', value, 'draw'),
-      },
-      {
-        title: '皇冠负',
-        dataIndex: 'c_l',
-        key: 'c_l',
-        width: 110,
-        responsive: responsiveLg,
-        render: (value: number) => renderOutcomeTag('客胜', value, 'lose'),
+        title: '皇冠',
+        key: 'crown_triplet',
+        width: 210,
+        render: (record: MatchRow) => formatCrownOddsBlock(record),
       },
       {
         title: '皇冠让球',
         dataIndex: 'c_h',
         key: 'c_h',
-        width: 220,
+        width: 250,
         responsive: responsiveMd,
-        render: (value: CrownHandicap[] | CrownHandicap | string | null) => formatCrownHandicap(value, crownHandicapDisplayLimit),
+        render: (value: CrownHandicap[] | CrownHandicap | string | null) =>
+          formatCrownHandicap(value, crownHandicapDisplayLimit),
       },
       {
-        title: '操作',
-        key: 'action',
-        width: 90,
-        render: (record: MatchRow) =>
-          isManualMatch(record) ? (
-            <Space size={4}>
-              <Button
-                type="text"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={() => {
-                  setEditingMatch(record);
-                  setIsModalVisible(true);
-                }}
-              />
-              <Popconfirm title="确认删除该比赛？" onConfirm={() => handleDelete(record.match_id)}>
-                <Button type="text" danger size="small" icon={<DeleteOutlined />} />
-              </Popconfirm>
-            </Space>
-          ) : (
-            <Text type="secondary">-</Text>
-          ),
+        title: '进球',
+        dataIndex: 'c_goal',
+        key: 'c_goal',
+        width: 160,
+        render: (value: GoalOddsItem[] | string | null) => formatGoalOddsBlock(value),
+      },
+      {
+        title: '大小球',
+        dataIndex: 'c_ou',
+        key: 'c_ou',
+        width: 210,
+        render: (value: OverUnderOddsItem[] | string | null) => formatOverUnderOddsBlock(value),
       },
     ],
     [crownHandicapDisplayLimit]
   );
 
-  const countdownText = refreshStatus?.auto_scan_enabled === false
-    ? '自动同步已关闭'
-    : `${Math.max(0, remainingSeconds ?? refreshStatus?.interval_seconds ?? 0)}秒后同步数据`;
+  const countdownText =
+    refreshStatus?.auto_scan_enabled === false
+      ? '自动同步已关闭'
+      : `（状态：${refreshStatus?.crown_fetch_status === 'success' ? '成功' : '失败'}）皇冠抓取 最近抓取：${
+          refreshStatus?.crown_last_fetch_at ? dayjs(refreshStatus.crown_last_fetch_at).format('MM-DD HH:mm:ss') : '-'
+        } ${Math.max(0, remainingSeconds ?? refreshStatus?.interval_seconds ?? 0)}秒后同步数据`;
 
   return (
-    <div style={{ maxWidth: 1560, margin: '0 auto' }}>
+    <div style={{ maxWidth: 1680, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Title level={3} style={{ margin: 0 }}>{`比赛列表（${matches.length}场）`}</Title>
         <Space>
           <Text type="secondary">{countdownText}</Text>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => {
-              setEditingMatch(null);
-              setIsModalVisible(true);
-            }}
-          >
-            手动添加
-          </Button>
         </Space>
       </div>
 
-      <Card className="shadow-sm" styles={{ body: { padding: 10 } }}>
+      <Card className="shadow-sm" styles={{ body: { padding: 12 } }}>
         <Table
+          className="match-list-table"
           dataSource={matches}
           columns={columns}
           rowKey="match_id"
           loading={loading}
           size="small"
-          pagination={{ pageSize: 18, size: 'small' }}
+          tableLayout="fixed"
+          scroll={{ x: 'max-content' }}
+          pagination={{
+            current: currentPage,
+            pageSize,
+            size: 'small',
+            showSizeChanger: true,
+            pageSizeOptions: ['10', '20', '50', '100'],
+            onShowSizeChange: (_, size) => {
+              setPageSize(size);
+              setCurrentPage(1);
+            },
+            onChange: (page, size) => {
+              if (size !== pageSize) {
+                setPageSize(size);
+              }
+              setCurrentPage(page);
+            },
+          }}
         />
       </Card>
-
-      <MatchModal
-        visible={isModalVisible}
-        onCancel={() => {
-          setIsModalVisible(false);
-          setEditingMatch(null);
-        }}
-        onFinish={handleCreateOrUpdate}
-        initialValues={editingMatch || undefined}
-        title={editingMatch ? '编辑比赛详情' : '手动添加比赛'}
-      />
     </div>
   );
 };

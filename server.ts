@@ -5,10 +5,11 @@ import fs from 'fs';
 import { randomUUID } from 'crypto';
 import cookieParser from 'cookie-parser';
 import bcrypt from 'bcryptjs';
+import { WebSocketServer } from 'ws';
 import db, { formatLocalDbDateTime, initDb } from './src/server/db';
 import { CrawlerService } from './src/server/crawler';
 import { ArbitrageEngine } from './src/server/arbitrageEngine';
-import { authenticateToken, authorizeAdmin, generateToken, logAction, AuthRequest, revokeAllUserSessions, revokeSession } from './src/server/auth';
+import { authenticateToken, authorizeAdmin, generateToken, logAction, AuthRequest, revokeAllUserSessions, revokeSession, validateAuthToken } from './src/server/auth';
 import { invertHandicap, normalizeCrownTarget, parseParlayRawSide, sideToLabel } from './src/shared/oddsText';
 
 const DEFAULT_SYNC_INTERVAL_SECONDS = 90;
@@ -25,12 +26,48 @@ const ADMIN_ONLY_SETTINGS_KEYS = new Set([
   'hga_username',
   'hga_password',
   'hga_team_alias_map',
+  'hga_team_alias_groups',
   'hga_team_alias_pending_suggestions',
   'hga_team_alias_auto_apply_threshold',
+  'hga_team_alias_table_rows',
   'hga_runtime_status',
   'hga_runtime_message',
 ]);
 let nextAutoScanAtMs = 0;
+let currentAutoScanIntervalSeconds = DEFAULT_SYNC_INTERVAL_SECONDS;
+
+type SyncPushEvent = {
+  id: number;
+  match_id: string;
+  change_type: 'insert' | 'update' | 'delete';
+  changed_fields: string[];
+  version: string;
+  created_at: string;
+};
+
+function parseCookieHeader(cookieHeader?: string) {
+  const map: Record<string, string> = {};
+  if (!cookieHeader) return map;
+  for (const pair of cookieHeader.split(';')) {
+    const [rawKey, ...rawValueParts] = pair.split('=');
+    const key = String(rawKey || '').trim();
+    if (!key) continue;
+    const rawValue = rawValueParts.join('=').trim();
+    map[key] = decodeURIComponent(rawValue || '');
+  }
+  return map;
+}
+
+function formatLocalDateTimeFromTs(ts: number) {
+  const d = new Date(ts);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+}
 
 function isAdminUser(user?: { role?: string } | null) {
   return user?.role === 'Admin';
@@ -125,6 +162,27 @@ function getSyncRefreshStatus() {
   const intervalSeconds = getEffectiveSyncIntervalSeconds();
   const lastSyncAtMs = getLastSyncTimeMs();
   const hgaEnabled = isAdminHgaEnabled();
+  const latestCrownFetch = db
+    .prepare(`SELECT status, hga_status, note, created_at FROM scrape_health_logs ORDER BY id DESC LIMIT 1`)
+    .get() as { status?: string; hga_status?: string; note?: string; created_at?: string } | undefined;
+  const crownFetchOk = String(latestCrownFetch?.hga_status || '').toLowerCase() === 'ok';
+  const crownFetchStatus = crownFetchOk ? 'success' : 'failed';
+  const crownLastFetchAt = latestCrownFetch?.created_at
+    ? (() => {
+        const parsed = new Date(String(latestCrownFetch.created_at).replace(' ', 'T'));
+        return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+      })()
+    : null;
+  const latestStatus = String(latestCrownFetch?.status || '').toLowerCase();
+  const latestNote = String(latestCrownFetch?.note || '').trim();
+  const snapshotGuarded = latestStatus === 'skipped' && latestNote.includes('snapshot quality guard');
+  const snapshotStatus = snapshotGuarded ? 'guarded' : latestStatus === 'ok' || latestStatus === 'unchanged' ? 'applied' : 'unknown';
+  const snapshotMessage = snapshotGuarded
+    ? latestNote
+    : snapshotStatus === 'applied'
+      ? '最新抓取快照已生效'
+      : latestNote || '暂无快照状态';
+  const snapshotLastDecisionAt = crownLastFetchAt;
   const autoScanRow = adminId
     ? (db
         .prepare("SELECT value FROM system_settings WHERE user_id = ? AND key = 'auto_scan'")
@@ -133,11 +191,17 @@ function getSyncRefreshStatus() {
   const autoScanEnabled = autoScanRow?.value === 'true';
   if (!autoScanEnabled) {
     nextAutoScanAtMs = 0;
+    currentAutoScanIntervalSeconds = intervalSeconds;
     return {
       auto_scan_enabled: false,
       hga_enabled: hgaEnabled,
       interval_seconds: intervalSeconds,
       last_sync_at: lastSyncAtMs > 0 ? new Date(lastSyncAtMs).toISOString() : null,
+      crown_fetch_status: crownFetchStatus,
+      crown_last_fetch_at: crownLastFetchAt,
+      snapshot_status: snapshotStatus,
+      snapshot_message: snapshotMessage,
+      snapshot_last_decision_at: snapshotLastDecisionAt,
       next_sync_at: null,
       remaining_seconds: 0,
       can_refresh: false,
@@ -152,12 +216,38 @@ function getSyncRefreshStatus() {
   return {
     auto_scan_enabled: true,
     hga_enabled: hgaEnabled,
-    interval_seconds: intervalSeconds,
+    interval_seconds: currentAutoScanIntervalSeconds,
     last_sync_at: lastSyncAtMs > 0 ? new Date(lastSyncAtMs).toISOString() : null,
+    crown_fetch_status: crownFetchStatus,
+    crown_last_fetch_at: crownLastFetchAt,
+    snapshot_status: snapshotStatus,
+    snapshot_message: snapshotMessage,
+    snapshot_last_decision_at: snapshotLastDecisionAt,
     next_sync_at: new Date(scheduledNextSyncAtMs).toISOString(),
     remaining_seconds: remainingSeconds,
     can_refresh: remainingSeconds <= 0,
   };
+}
+
+function getRecentHgaAvgFetchSeconds(sampleSize = 30) {
+  const size = Math.max(1, Math.min(200, Number(sampleSize) || 30));
+  const row = db
+    .prepare(
+      `SELECT AVG(duration_ms) AS avg_duration_ms
+       FROM (
+         SELECT duration_ms
+         FROM scrape_health_logs
+         WHERE source = 'external'
+           AND hga_status = 'ok'
+           AND duration_ms > 0
+         ORDER BY id DESC
+         LIMIT ?
+       )`
+    )
+    .get(size) as { avg_duration_ms?: number } | undefined;
+  const avgMs = Number(row?.avg_duration_ms || 0);
+  if (!Number.isFinite(avgMs) || avgMs <= 0) return 0;
+  return Math.round((avgMs / 1000) * 10) / 10;
 }
 
 function normalizeCrownHandicaps(raw: any) {
@@ -190,6 +280,51 @@ function normalizeCrownHandicaps(raw: any) {
 
   const single = normalizeItem(parsed);
   return single ? [single] : [];
+}
+
+function normalizeGoalOdds(raw: any) {
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = [];
+    }
+  }
+
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .map((item: any) => {
+      const label = String(item?.label ?? item?.goal ?? item?.name ?? '').trim();
+      const odds = Number(item?.odds ?? item?.value ?? item?.price ?? 0);
+      if (!label || !Number.isFinite(odds) || odds <= 0) return null;
+      return { label, odds };
+    })
+    .filter(Boolean);
+}
+
+function normalizeOverUnderOdds(raw: any) {
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = [];
+    }
+  }
+
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .map((item: any) => {
+      const line = String(item?.line ?? item?.type ?? item?.handicap ?? '').trim();
+      const over_odds = Number(item?.over_odds ?? item?.overOdds ?? item?.big_odds ?? item?.home_odds ?? 0);
+      const under_odds = Number(item?.under_odds ?? item?.underOdds ?? item?.small_odds ?? item?.away_odds ?? 0);
+      if (!line || !Number.isFinite(over_odds) || over_odds <= 0 || !Number.isFinite(under_odds) || under_odds <= 0) return null;
+      return { line, over_odds, under_odds };
+    })
+    .filter(Boolean);
 }
 
 function toDisplayOdds(value: any) {
@@ -490,9 +625,9 @@ function isManualMatchId(matchId?: string) {
   return typeof matchId === 'string' && matchId.startsWith('manual_');
 }
 
-function parseSingleBaseType(raw: any): 'jingcai' | 'crown' | 'hg' | null {
+function parseSingleBaseType(raw: any): 'jingcai' | 'crown' | 'hg' | 'goal_hedge' | null {
   const v = String(raw || '').trim().toLowerCase();
-  if (v === 'jingcai' || v === 'crown' || v === 'hg') return v;
+  if (v === 'jingcai' || v === 'crown' || v === 'hg' || v === 'goal_hedge') return v;
   return null;
 }
 
@@ -954,7 +1089,7 @@ async function startServer() {
                j.win_odds as j_w, j.draw_odds as j_d, j.lose_odds as j_l,
                j.handicap_win_odds as j_hw, j.handicap_draw_odds as j_hd, j.handicap_lose_odds as j_hl,
                j.rebate_rate as j_r, j.share_rate as j_s,
-               c.win_odds as c_w, c.draw_odds as c_d, c.lose_odds as c_l, c.handicaps as c_h, c.rebate_rate as c_r, c.share_rate as c_s
+               c.win_odds as c_w, c.draw_odds as c_d, c.lose_odds as c_l, c.handicaps as c_h, c.goal_odds as c_goal, c.over_under_odds as c_ou, c.rebate_rate as c_r, c.share_rate as c_s
         FROM matches m
         LEFT JOIN jingcai_odds j ON m.match_id = j.match_id
         LEFT JOIN crown_odds c ON m.match_id = c.match_id
@@ -970,7 +1105,9 @@ async function startServer() {
         matches
           .map((m: any) => ({
             ...m,
-            c_h: normalizeCrownHandicaps(m.c_h)
+            c_h: normalizeCrownHandicaps(m.c_h),
+            c_goal: normalizeGoalOdds(m.c_goal),
+            c_ou: normalizeOverUnderOdds(m.c_ou),
           }))
       );
     } catch (err: any) {
@@ -985,7 +1122,7 @@ async function startServer() {
         SELECT m.*, m.jingcai_handicap as jc_handicap,
                j.win_odds as j_w, j.draw_odds as j_d, j.lose_odds as j_l,
                j.handicap_win_odds as j_hw, j.handicap_draw_odds as j_hd, j.handicap_lose_odds as j_hl,
-               c.win_odds as c_w, c.draw_odds as c_d, c.lose_odds as c_l, c.handicaps as c_h
+               c.win_odds as c_w, c.draw_odds as c_d, c.lose_odds as c_l, c.handicaps as c_h, c.goal_odds as c_goal, c.over_under_odds as c_ou
         FROM matches m
         LEFT JOIN jingcai_odds j ON m.match_id = j.match_id
         LEFT JOIN crown_odds c ON m.match_id = c.match_id
@@ -993,7 +1130,9 @@ async function startServer() {
       
       const exportData = matches.map((m: any) => ({
         ...m,
-        c_h: normalizeCrownHandicaps(m.c_h)
+        c_h: normalizeCrownHandicaps(m.c_h),
+        c_goal: normalizeGoalOdds(m.c_goal),
+        c_ou: normalizeOverUnderOdds(m.c_ou),
       }));
       
       res.setHeader('Content-Type', 'application/json');
@@ -1034,9 +1173,18 @@ async function startServer() {
           `).run(m.match_id, m.j_w || 0, m.j_d || 0, m.j_l || 0, m.j_hw || 0, m.j_hd || 0, m.j_hl || 0, 0.13);
           
           db.prepare(`
-            INSERT OR REPLACE INTO crown_odds (match_id, win_odds, draw_odds, lose_odds, handicaps, rebate_rate)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `).run(m.match_id, m.c_w || 0, m.c_d || 0, m.c_l || 0, JSON.stringify(m.c_h || []), 0.02);
+            INSERT OR REPLACE INTO crown_odds (match_id, win_odds, draw_odds, lose_odds, handicaps, goal_odds, over_under_odds, rebate_rate)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            m.match_id,
+            m.c_w || 0,
+            m.c_d || 0,
+            m.c_l || 0,
+            JSON.stringify(m.c_h || []),
+            JSON.stringify(m.c_goal || []),
+            JSON.stringify(m.c_ou || []),
+            0.02
+          );
         }
       })();
       
@@ -1059,7 +1207,7 @@ async function startServer() {
              j.win_odds as j_w, j.draw_odds as j_d, j.lose_odds as j_l,
              j.handicap_win_odds as j_hw, j.handicap_draw_odds as j_hd, j.handicap_lose_odds as j_hl,
              j.rebate_rate as j_r, j.share_rate as j_s,
-             c.win_odds as c_w, c.draw_odds as c_d, c.lose_odds as c_l, c.handicaps as c_h, c.rebate_rate as c_r, c.share_rate as c_s
+             c.win_odds as c_w, c.draw_odds as c_d, c.lose_odds as c_l, c.handicaps as c_h, c.goal_odds as c_goal, c.over_under_odds as c_ou, c.rebate_rate as c_r, c.share_rate as c_s
       FROM matches m
       LEFT JOIN jingcai_odds j ON m.match_id = j.match_id
       LEFT JOIN crown_odds c ON m.match_id = c.match_id
@@ -1072,20 +1220,22 @@ async function startServer() {
       ...match,
       j_share: match.j_s,
       c_share: match.c_s,
-      c_h: match.c_h ? JSON.parse(match.c_h) : []
+      c_h: match.c_h ? JSON.parse(match.c_h) : [],
+      c_goal: normalizeGoalOdds(match.c_goal),
+      c_ou: normalizeOverUnderOdds(match.c_ou),
     });
   });
 
   app.get('/api/arbitrage/opportunities', authenticateToken, (req: AuthRequest, res) => {
     const baseType = parseSingleBaseType(req.query.base_type);
     if (!baseType) {
-      return res.status(400).json({ error: 'Invalid base_type, expected jingcai|crown|hg' });
+      return res.status(400).json({ error: 'Invalid base_type, expected jingcai|crown|hg|goal_hedge' });
     }
     const opps = db.prepare(`
       SELECT o.*, m.league, m.home_team, m.away_team, m.match_time, m.jingcai_handicap as jc_handicap,
              j.win_odds as j_w, j.draw_odds as j_d, j.lose_odds as j_l,
              j.handicap_win_odds as j_hw, j.handicap_draw_odds as j_hd, j.handicap_lose_odds as j_hl,
-             c.win_odds as c_w, c.draw_odds as c_d, c.lose_odds as c_l, c.handicaps as c_h
+             c.win_odds as c_w, c.draw_odds as c_d, c.lose_odds as c_l, c.handicaps as c_h, c.goal_odds as c_goal, c.over_under_odds as c_ou
       FROM arbitrage_opportunities o
       JOIN matches m ON o.match_id = m.match_id
       LEFT JOIN jingcai_odds j ON o.match_id = j.match_id
@@ -1099,12 +1249,18 @@ async function startServer() {
         best_strategy: o.best_strategy ? JSON.parse(o.best_strategy) : null,
         jc_matrix: buildSingleJcMatrix(o),
         crown_matrix: buildSingleCrownMatrix(o),
+        c_goal: normalizeGoalOdds(o.c_goal),
+        c_ou: normalizeOverUnderOdds(o.c_ou),
       }))
       .map((o: any) => ({
         ...o,
         highlight_keys: buildSingleHighlightKeys(o.best_strategy),
       }))
-      .filter((o: any) => ArbitrageEngine.hasAllPositiveSingleTotalProfits(o.best_strategy, 0.01));
+      .filter((o: any) =>
+        baseType === 'goal_hedge'
+          ? ArbitrageEngine.hasAllPositiveGoalHedgeProfits(o.best_strategy, 0.01)
+          : ArbitrageEngine.hasAllPositiveSingleTotalProfits(o.best_strategy, 0.01)
+      );
     res.json(rows);
   });
 
@@ -1203,7 +1359,7 @@ async function startServer() {
     const { match_id, jingcai_side, jingcai_market, jingcai_amount, hedge_strategy_name, base_type, integer_unit } = req.body;
     const currentBaseType = parseSingleBaseType(base_type || 'jingcai');
     if (!currentBaseType) {
-      return res.status(400).json({ error: 'Invalid base_type, expected jingcai|crown|hg' });
+      return res.status(400).json({ error: 'Invalid base_type, expected jingcai|crown|hg|goal_hedge' });
     }
     const currentIntegerUnit = Math.max(1000, Number.parseInt(String(integer_unit || 10000), 10) || 10000);
     
@@ -1212,7 +1368,7 @@ async function startServer() {
              j.handicap_win_odds as j_hw, j.handicap_draw_odds as j_hd, j.handicap_lose_odds as j_hl,
              j.rebate_rate as j_r, j.share_rate as j_s,
              m.jingcai_handicap as jc_handicap,
-             c.win_odds as c_w, c.draw_odds as c_d, c.lose_odds as c_l, c.handicaps as c_h, c.rebate_rate as c_r, c.share_rate as c_s
+             c.win_odds as c_w, c.draw_odds as c_d, c.lose_odds as c_l, c.handicaps as c_h, c.goal_odds as c_goal, c.over_under_odds as c_ou, c.rebate_rate as c_r, c.share_rate as c_s
       FROM jingcai_odds j
       JOIN crown_odds c ON j.match_id = c.match_id
       JOIN matches m ON j.match_id = m.match_id
@@ -1249,21 +1405,26 @@ async function startServer() {
     const crownOdds = { 
       W: m.c_w, D: m.c_d, L: m.c_l, 
       handicaps: m.c_h ? JSON.parse(m.c_h) : [], 
+      goal_odds: m.c_goal ? JSON.parse(m.c_goal) : [],
+      over_under_odds: m.c_ou ? JSON.parse(m.c_ou) : [],
       rebate: Number.isFinite(configuredCrownRebate) ? configuredCrownRebate : m.c_r,
       share: Number.isFinite(configuredCrownShare) ? configuredCrownShare : m.c_s
     };
 
     const opportunities = ArbitrageEngine.findAllOpportunities(jingcai_amount, jcOdds, crownOdds, currentBaseType, currentIntegerUnit);
-    const filteredOpportunities = opportunities.filter((o: any) => {
-      if (o.jcSide !== jingcai_side) return false;
-      if (jingcai_market && o.jc_market !== jingcai_market) return false;
-      return true;
-    });
+    const filteredOpportunities =
+      currentBaseType === 'goal_hedge'
+        ? opportunities.filter((o: any) => ArbitrageEngine.hasAllPositiveGoalHedgeProfits(o, 0.01))
+        : opportunities.filter((o: any) => {
+            if (o.jcSide !== jingcai_side) return false;
+            if (jingcai_market && o.jc_market !== jingcai_market) return false;
+            return true;
+          });
     res.json(filteredOpportunities);
   });
 
   app.post('/api/matches', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
-    const { league, round, handicap, jc_handicap, home_team, away_team, match_time, j_w, j_d, j_l, j_hw, j_hd, j_hl, c_w, c_d, c_l, c_h, j_rebate, j_share, c_rebate, c_share } = req.body;
+    const { league, round, handicap, jc_handicap, home_team, away_team, match_time, j_w, j_d, j_l, j_hw, j_hd, j_hl, c_w, c_d, c_l, c_h, c_goal, c_ou, j_rebate, j_share, c_rebate, c_share } = req.body;
     const match_id = `manual_${Date.now()}`;
     
     const settings = db.prepare('SELECT * FROM system_settings WHERE user_id = ?').all(req.user!.id);
@@ -1290,9 +1451,19 @@ async function startServer() {
       `).run(match_id, j_w || 0, j_d || 0, j_l || 0, j_hw || 0, j_hd || 0, j_hl || 0, jcRebate, jcShare);
       
       db.prepare(`
-        INSERT INTO crown_odds (match_id, win_odds, draw_odds, lose_odds, handicaps, rebate_rate, share_rate)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(match_id, c_w || 0, c_d || 0, c_l || 0, JSON.stringify(c_h || []), crownRebate, crownShare);
+        INSERT INTO crown_odds (match_id, win_odds, draw_odds, lose_odds, handicaps, goal_odds, over_under_odds, rebate_rate, share_rate)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        match_id,
+        c_w || 0,
+        c_d || 0,
+        c_l || 0,
+        JSON.stringify(c_h || []),
+        JSON.stringify(c_goal || []),
+        JSON.stringify(c_ou || []),
+        crownRebate,
+        crownShare
+      );
     })();
     
     void CrawlerService.scanOpportunities(req.user!.id).catch((err) => {
@@ -1318,7 +1489,7 @@ async function startServer() {
   });
 
   app.post('/api/matches/update-odds', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
-    const { match_id, league, round, handicap, jc_handicap, home_team, away_team, match_time, j_w, j_d, j_l, j_hw, j_hd, j_hl, c_w, c_d, c_l, c_h, j_rebate, j_share, c_rebate, c_share } = req.body;
+    const { match_id, league, round, handicap, jc_handicap, home_team, away_team, match_time, j_w, j_d, j_l, j_hw, j_hd, j_hl, c_w, c_d, c_l, c_h, c_goal, c_ou, j_rebate, j_share, c_rebate, c_share } = req.body;
     if (!isManualMatchId(match_id)) {
       return res.status(403).json({ error: 'Only manually added matches can be updated' });
     }
@@ -1348,11 +1519,26 @@ async function startServer() {
       
       db.prepare(`
         UPDATE crown_odds 
-        SET win_odds = ?, draw_odds = ?, lose_odds = ?${c_h !== undefined ? ', handicaps = ?' : ''},
+        SET win_odds = ?, draw_odds = ?, lose_odds = ?
+            ${c_h !== undefined ? ', handicaps = ?' : ''}
+            ${c_goal !== undefined ? ', goal_odds = ?' : ''}
+            ${c_ou !== undefined ? ', over_under_odds = ?' : ''},
             rebate_rate = COALESCE(?, rebate_rate),
             share_rate = COALESCE(?, share_rate)
         WHERE match_id = ?
-      `).run(...[c_w, c_d, c_l, ...(c_h !== undefined ? [JSON.stringify(c_h)] : []), c_rebate, c_share, match_id]);
+      `).run(
+        ...[
+          c_w,
+          c_d,
+          c_l,
+          ...(c_h !== undefined ? [JSON.stringify(c_h)] : []),
+          ...(c_goal !== undefined ? [JSON.stringify(c_goal)] : []),
+          ...(c_ou !== undefined ? [JSON.stringify(c_ou)] : []),
+          c_rebate,
+          c_share,
+          match_id,
+        ]
+      );
     })();
     
     // 淇濆瓨璧旂巼鍚庡紓姝ラ噸绠楀鍒╂満浼?
@@ -1423,7 +1609,8 @@ async function startServer() {
     settingsMap.hga_enabled = settingsMap.hga_enabled === true;
     settingsMap.hga_username = String(settingsMap.hga_username || '');
     settingsMap.hga_password = String(settingsMap.hga_password || '');
-    settingsMap.hga_team_alias_map = String(settingsMap.hga_team_alias_map || hgaMappings.hga_team_alias_map || '');
+    settingsMap.hga_team_alias_map = String(hgaMappings.hga_team_alias_map || '');
+    settingsMap.hga_team_alias_groups = String(hgaMappings.hga_team_alias_groups || '[]');
     settingsMap.hga_team_alias_pending_suggestions = String(
       settingsMap.hga_team_alias_pending_suggestions || hgaMappings.hga_team_alias_pending_suggestions || '[]'
     );
@@ -1435,6 +1622,11 @@ async function startServer() {
     settingsMap.hga_status = hgaStatus.status;
     settingsMap.hga_status_message = hgaStatus.message;
     settingsMap.hga_blocked_until = hgaStatus.blocked_until;
+    settingsMap.hga_avg_fetch_seconds = getRecentHgaAvgFetchSeconds();
+    const refreshStatus = getSyncRefreshStatus() as any;
+    settingsMap.sync_snapshot_status = String(refreshStatus.snapshot_status || 'unknown');
+    settingsMap.sync_snapshot_message = String(refreshStatus.snapshot_message || '');
+    settingsMap.sync_snapshot_last_decision_at = refreshStatus.snapshot_last_decision_at || null;
     delete settingsMap.hga_runtime_status;
     delete settingsMap.hga_runtime_message;
     res.json(settingsMap);
@@ -1537,9 +1729,24 @@ async function startServer() {
           if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
             return res.status(400).json({ status: 'failed', message: 'HGA team alias map must be a valid JSON object' });
           }
-          values.hga_team_alias_map = CrawlerService.saveHgaTeamAliasMap(JSON.stringify(parsed, null, 2));
+          CrawlerService.saveHgaTeamAliasMap(JSON.stringify(parsed, null, 2));
+          delete values.hga_team_alias_map;
         } catch {
           return res.status(400).json({ status: 'failed', message: 'HGA team alias map parse failed, please submit valid JSON' });
+        }
+      }
+      if (values.hga_team_alias_groups !== undefined) {
+        try {
+          const parsed = typeof values.hga_team_alias_groups === 'string'
+            ? JSON.parse(String(values.hga_team_alias_groups || '').trim())
+            : values.hga_team_alias_groups;
+          const result = CrawlerService.saveHgaTeamAliasGroups(Array.isArray(parsed) ? parsed : []);
+          if (result.status !== 'ok') {
+            return res.status(400).json(result);
+          }
+          delete values.hga_team_alias_groups;
+        } catch {
+          return res.status(400).json({ status: 'failed', message: 'HGA team alias groups parse failed, please submit valid JSON' });
         }
       }
       if (values.hga_team_alias_auto_apply_threshold !== undefined) {
@@ -1550,6 +1757,7 @@ async function startServer() {
     db.transaction(() => {
       if (isAdminUser(req.user)) {
         db.prepare("DELETE FROM system_settings WHERE user_id = ? AND key = 'hga_fixture_pair_alias_map'").run(req.user!.id);
+        db.prepare("DELETE FROM system_settings WHERE user_id = ? AND key = 'hga_team_alias_map'").run(req.user!.id);
       }
       for (const [key, value] of Object.entries(values)) {
         db.prepare('INSERT OR REPLACE INTO system_settings (user_id, key, value) VALUES (?, ?, ?)').run(req.user!.id, key, String(value));
@@ -1578,27 +1786,128 @@ async function startServer() {
     }
   });
 
-  app.post('/api/settings/hga/alias-suggestions/apply', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
-    const trade500Name = String(req.body?.trade500_name || '').trim();
-    const hgaName = String(req.body?.hga_name || '').trim();
-    if (!trade500Name || !hgaName) {
-      return res.status(400).json({ status: 'failed', message: 'trade500_name ? hga_name ??' });
+  app.get('/api/settings/hga/alias-map/export', authenticateToken, authorizeAdmin, (_req: AuthRequest, res) => {
+    try {
+      const rawText = String(CrawlerService.getHgaMappingSettings().hga_team_alias_map || '{}').trim();
+      const parsed = JSON.parse(rawText);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return res.status(500).json({ status: 'failed', message: 'HGA alias map is invalid' });
+      }
+      const normalized = Object.entries(parsed).reduce<Record<string, string>>((acc, [key, value]) => {
+        const k = String(key || '').trim();
+        const v = String(value || '').trim();
+        if (k && v) acc[k] = v;
+        return acc;
+      }, {});
+      res.setHeader('Content-Disposition', 'attachment; filename="hga-team-alias-map.json"');
+      res.type('application/json; charset=utf-8');
+      return res.send(`${JSON.stringify(normalized, null, 2)}\n`);
+    } catch {
+      return res.status(500).json({ status: 'failed', message: 'HGA alias map export failed' });
     }
-    CrawlerService.applyPendingHgaAliasSuggestion(trade500Name, hgaName);
+  });
+
+  app.post('/api/settings/hga/alias-map/import', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
+    try {
+      const raw = req.body?.hga_team_alias_map;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return res.status(400).json({ status: 'failed', message: 'hga_team_alias_map must be a JSON object' });
+      }
+      const normalized = Object.entries(parsed).reduce<Record<string, string>>((acc, [key, value]) => {
+        const k = String(key || '').trim();
+        const v = String(value || '').trim();
+        if (k && v) acc[k] = v;
+        return acc;
+      }, {});
+      CrawlerService.saveHgaTeamAliasMap(JSON.stringify(normalized, null, 2));
+      db.prepare('INSERT OR REPLACE INTO system_settings (user_id, key, value) VALUES (?, ?, ?)')
+        .run(req.user!.id, 'hga_team_alias_map', JSON.stringify(normalized, null, 2));
+      CrawlerService.resetHgaMappingCache();
+      return res.json({ status: 'ok', count: Object.keys(normalized).length });
+    } catch {
+      return res.status(400).json({ status: 'failed', message: 'Import failed, please upload valid JSON' });
+    }
+  });
+
+  app.get('/api/settings/hga/alias-groups', authenticateToken, authorizeAdmin, (_req: AuthRequest, res) => {
+    const mappings = CrawlerService.getHgaMappingSettings();
+    let pendingSuggestions: any[] = [];
+    try {
+      const parsed = JSON.parse(String(mappings.hga_team_alias_pending_suggestions || '[]'));
+      pendingSuggestions = Array.isArray(parsed)
+        ? parsed.map((item: any) => {
+            const jingcaiName = String(item?.jingcai_name || item?.trade500_name || '').trim();
+            const huangguanName = String(item?.huangguan_name || item?.hga_name || '').trim();
+            return {
+              ...item,
+              jingcai_name: jingcaiName,
+              huangguan_name: huangguanName,
+              trade500_name: jingcaiName,
+              hga_name: huangguanName,
+            };
+          })
+        : [];
+    } catch {
+      pendingSuggestions = [];
+    }
+    return res.json({
+      status: 'ok',
+      groups: CrawlerService.getHgaAliasGroups(),
+      hga_team_alias_map: mappings.hga_team_alias_map,
+      hga_team_alias_auto_apply_threshold: mappings.hga_team_alias_auto_apply_threshold,
+      hga_team_alias_pending_suggestions: pendingSuggestions,
+    });
+  });
+
+  app.post('/api/settings/hga/alias-groups', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
+    const groups = Array.isArray(req.body?.groups) ? req.body.groups : [];
+    const result = CrawlerService.saveHgaTeamAliasGroups(groups);
+    if (result.status !== 'ok') {
+      return res.status(400).json(result);
+    }
+    if (req.body?.hga_team_alias_auto_apply_threshold !== undefined) {
+      const parsed = Number.parseInt(String(req.body.hga_team_alias_auto_apply_threshold || 3), 10);
+      const threshold = Number.isFinite(parsed) ? Math.max(1, Math.min(10, parsed)) : 3;
+      db.prepare('INSERT OR REPLACE INTO system_settings (user_id, key, value) VALUES (?, ?, ?)').run(
+        req.user!.id,
+        'hga_team_alias_auto_apply_threshold',
+        String(threshold)
+      );
+    }
+    return res.json({
+      status: 'ok',
+      groups: CrawlerService.getHgaAliasGroups(),
+      hga_team_alias_auto_apply_threshold: CrawlerService.getHgaAliasAutoApplyThreshold(),
+      hga_team_alias_pending_suggestions: CrawlerService.getPendingHgaAliasSuggestions(),
+    });
+  });
+
+  app.post('/api/settings/hga/alias-suggestions/apply', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
+    const jingcaiName = String(req.body?.jingcai_name || req.body?.trade500_name || '').trim();
+    const huangguanName = String(req.body?.huangguan_name || req.body?.hga_name || '').trim();
+    if (!jingcaiName || !huangguanName) {
+      return res.status(400).json({ status: 'failed', message: 'jingcai_name and huangguan_name are required' });
+    }
+    const result = CrawlerService.applyPendingHgaAliasSuggestion(jingcaiName, huangguanName);
+    if (result.status !== 'ok') {
+      return res.status(400).json(result);
+    }
     return res.json({
       status: 'ok',
       hga_team_alias_map: CrawlerService.getHgaMappingSettings().hga_team_alias_map,
+      hga_team_alias_groups: CrawlerService.getHgaMappingSettings().hga_team_alias_groups,
       hga_team_alias_pending_suggestions: CrawlerService.getHgaMappingSettings().hga_team_alias_pending_suggestions,
     });
   });
 
   app.post('/api/settings/hga/alias-suggestions/dismiss', authenticateToken, authorizeAdmin, (req: AuthRequest, res) => {
-    const trade500Name = String(req.body?.trade500_name || '').trim();
-    const hgaName = String(req.body?.hga_name || '').trim();
-    if (!trade500Name || !hgaName) {
-      return res.status(400).json({ status: 'failed', message: 'trade500_name and hga_name are required' });
+    const jingcaiName = String(req.body?.jingcai_name || req.body?.trade500_name || '').trim();
+    const huangguanName = String(req.body?.huangguan_name || req.body?.hga_name || '').trim();
+    if (!jingcaiName || !huangguanName) {
+      return res.status(400).json({ status: 'failed', message: 'jingcai_name and huangguan_name are required' });
     }
-    CrawlerService.dismissPendingHgaAliasSuggestion(trade500Name, hgaName);
+    CrawlerService.dismissPendingHgaAliasSuggestion(jingcaiName, huangguanName);
     return res.json({
       status: 'ok',
       hga_team_alias_pending_suggestions: CrawlerService.getHgaMappingSettings().hga_team_alias_pending_suggestions,
@@ -1638,6 +1947,118 @@ async function startServer() {
     }
   });
 
+  function getLatestSyncChangeEventId() {
+    try {
+      db.prepare(
+        `CREATE TABLE IF NOT EXISTS sync_change_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          match_id TEXT NOT NULL,
+          change_type TEXT NOT NULL,
+          changed_fields TEXT,
+          version TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`
+      ).run();
+      return Number((db.prepare('SELECT id FROM sync_change_events ORDER BY id DESC LIMIT 1').get() as any)?.id || 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  let lastBroadcastedSyncEventId = getLatestSyncChangeEventId();
+  const wsClients = new Set<any>();
+
+  const wsServer = new WebSocketServer({ noServer: true });
+  wsServer.on('connection', (socket) => {
+    wsClients.add(socket);
+    socket.on('close', () => {
+      wsClients.delete(socket);
+    });
+    socket.send(
+      JSON.stringify({
+        type: 'sync_status',
+        refresh_status: getSyncRefreshStatus(),
+        ts: new Date().toISOString(),
+      })
+    );
+  });
+
+  function collectRecentSyncEventsSince(eventIdExclusive: number) {
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS sync_change_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        match_id TEXT NOT NULL,
+        change_type TEXT NOT NULL,
+        changed_fields TEXT,
+        version TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    ).run();
+    return db
+      .prepare(
+        `SELECT id, match_id, change_type, changed_fields, version, created_at
+         FROM sync_change_events
+         WHERE id > ?
+         ORDER BY id ASC`
+      )
+      .all(eventIdExclusive) as Array<{
+      id: number;
+      match_id: string;
+      change_type: 'insert' | 'update' | 'delete';
+      changed_fields?: string;
+      version?: string;
+      created_at?: string;
+    }>;
+  }
+
+  function broadcastSyncUpdate(source: 'auto_scan' | 'initial_sync') {
+    if (wsClients.size === 0) return;
+    try {
+      const rows = collectRecentSyncEventsSince(lastBroadcastedSyncEventId);
+      const events: SyncPushEvent[] = rows.map((row) => {
+        let changedFields: string[] = [];
+        try {
+          const parsed = JSON.parse(String(row.changed_fields || '[]'));
+          if (Array.isArray(parsed)) changedFields = parsed.map((item) => String(item));
+        } catch {
+          changedFields = [];
+        }
+        return {
+          id: Number(row.id || 0),
+          match_id: String(row.match_id || ''),
+          change_type: row.change_type,
+          changed_fields: changedFields,
+          version: String(row.version || ''),
+          created_at: String(row.created_at || ''),
+        };
+      });
+
+      if (events.length > 0) {
+        lastBroadcastedSyncEventId = events[events.length - 1].id;
+      }
+
+      const refreshStatus = getSyncRefreshStatus();
+      const payload = JSON.stringify({
+        type: 'sync_update',
+        source,
+        has_changes: events.length > 0,
+        changed_count: events.length,
+        changed_match_ids: Array.from(new Set(events.map((event) => event.match_id).filter(Boolean))),
+        changed_fields: Array.from(new Set(events.flatMap((event) => event.changed_fields || []))),
+        refresh_status: refreshStatus,
+        ts: new Date().toISOString(),
+      });
+
+      for (const client of wsClients) {
+        if (client.readyState === 1) {
+          client.send(payload);
+        }
+      }
+    } catch (error) {
+      console.warn('broadcastSyncUpdate failed:', error);
+    }
+  }
+
   const server = app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Server running on http://localhost:${PORT}`);
     // Startup check: if matches table is empty, run one initial sync.
@@ -1647,6 +2068,7 @@ async function startServer() {
         console.log('Matches empty, running initial external scraper sync...');
         await CrawlerService.syncFromExternalScraper();
         setLastSyncTimeMs(Date.now());
+        broadcastSyncUpdate('initial_sync');
       } else {
         console.log('Matches exist, skip blocking full scan at startup (will rely on auto scan).');
       }
@@ -1655,15 +2077,99 @@ async function startServer() {
     }
   });
 
+  server.on('upgrade', (req, socket, head) => {
+    if (!req.url || !req.url.startsWith('/ws/matches')) {
+      socket.destroy();
+      return;
+    }
+
+    const cookies = parseCookieHeader(req.headers.cookie);
+    const token = cookies.token;
+    if (!token) {
+      socket.destroy();
+      return;
+    }
+    const auth = validateAuthToken(token, { touchSession: true });
+    if (!auth.ok) {
+      socket.destroy();
+      return;
+    }
+
+    wsServer.handleUpgrade(req, socket, head, (ws) => {
+      wsServer.emit('connection', ws, req);
+    });
+  });
+
   let scanTimer: NodeJS.Timeout | null = null;
   let autoScanRunning = false;
 
+  function getAdaptiveSyncIntervalSeconds(baseInterval: number) {
+    let interval = Math.max(MIN_SYNC_INTERVAL_SECONDS, Number(baseInterval) || DEFAULT_SYNC_INTERVAL_SECONDS);
+    try {
+      const nowTs = Date.now();
+      const nowText = formatLocalDateTimeFromTs(nowTs);
+      const plus1h = formatLocalDateTimeFromTs(nowTs + 60 * 60 * 1000);
+      const plus6h = formatLocalDateTimeFromTs(nowTs + 6 * 60 * 60 * 1000);
+
+      const nearKickoffCount = Number(
+        (
+          db
+            .prepare(
+              `SELECT COUNT(*) as count
+               FROM matches
+               WHERE match_id NOT LIKE 'manual_%'
+                 AND status = 'upcoming'
+                 AND match_time >= ?
+                 AND match_time <= ?`
+            )
+            .get(nowText, plus1h) as any
+        )?.count || 0
+      );
+      const activeWindowCount = Number(
+        (
+          db
+            .prepare(
+              `SELECT COUNT(*) as count
+               FROM matches
+               WHERE match_id NOT LIKE 'manual_%'
+                 AND status = 'upcoming'
+                 AND match_time >= ?
+                 AND match_time <= ?`
+            )
+            .get(nowText, plus6h) as any
+        )?.count || 0
+      );
+
+      const recentHealthRows = db
+        .prepare(`SELECT status FROM scrape_health_logs ORDER BY id DESC LIMIT 5`)
+        .all() as Array<{ status?: string }>;
+      const unchangedStreak = recentHealthRows.filter((row) => row.status === 'unchanged').length;
+      const failedCount = recentHealthRows.filter((row) => row.status === 'error' || row.status === 'skipped').length;
+
+      if (nearKickoffCount > 0) {
+        interval = Math.max(15, Math.min(30, Math.floor(interval / 3)));
+      } else if (activeWindowCount > 0) {
+        interval = Math.max(45, Math.min(120, Math.floor(interval / 2)));
+      } else if (unchangedStreak >= 3) {
+        interval = Math.min(600, Math.max(120, interval * 2));
+      }
+
+      if (failedCount >= 2) {
+        interval = Math.max(90, Math.min(300, interval));
+      }
+    } catch {
+      // keep base interval when adaptive probes fail
+    }
+    return Math.max(15, Math.floor(interval));
+  }
+
   async function startAutoScan() {
     if (scanTimer) {
-      clearInterval(scanTimer);
+      clearTimeout(scanTimer);
       scanTimer = null;
     }
     nextAutoScanAtMs = 0;
+    currentAutoScanIntervalSeconds = getEffectiveSyncIntervalSeconds();
 
     // Auto scan scheduler notes:
     // 1. Start timer only when admin enables auto_scan; minimum interval is 60 seconds.
@@ -1678,28 +2184,49 @@ async function startServer() {
       return;
     }
 
-    const interval = getEffectiveSyncIntervalSeconds();
-    nextAutoScanAtMs = Date.now() + interval * 1000;
-    
-    console.log(`Starting global auto scan every ${interval} seconds`);
-    scanTimer = setInterval(async () => {
-      if (autoScanRunning) {
-        console.log('Skip background sync: previous run still in progress');
+    const scheduleNext = () => {
+      const adminRef = db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as any;
+      if (!adminRef) {
+        nextAutoScanAtMs = 0;
+        currentAutoScanIntervalSeconds = getEffectiveSyncIntervalSeconds();
         return;
       }
-      nextAutoScanAtMs = Date.now() + interval * 1000;
+      const autoRef = db.prepare("SELECT value FROM system_settings WHERE key = 'auto_scan' AND user_id = ?").get(adminRef.id) as any;
+      if (autoRef?.value !== 'true') {
+        nextAutoScanAtMs = 0;
+        currentAutoScanIntervalSeconds = getEffectiveSyncIntervalSeconds();
+        return;
+      }
+      const baseInterval = getEffectiveSyncIntervalSeconds();
+      const nextInterval = getAdaptiveSyncIntervalSeconds(baseInterval);
+      currentAutoScanIntervalSeconds = nextInterval;
+      nextAutoScanAtMs = Date.now() + nextInterval * 1000;
+      if (scanTimer) clearTimeout(scanTimer);
+      scanTimer = setTimeout(runCycle, nextInterval * 1000);
+    };
+
+    const runCycle = async () => {
+      if (autoScanRunning) {
+        console.log('Skip background sync: previous run still in progress');
+        scheduleNext();
+        return;
+      }
       autoScanRunning = true;
-      console.log('Running background sync and scan...');
+      console.log(`Running background sync and scan (adaptive interval ${currentAutoScanIntervalSeconds}s)...`);
       try {
         await CrawlerService.syncFromExternalScraper();
         setLastSyncTimeMs(Date.now());
+        broadcastSyncUpdate('auto_scan');
       } catch (err) {
         console.error(err);
       } finally {
         autoScanRunning = false;
+        scheduleNext();
       }
+    };
 
-    }, interval * 1000);
+    console.log(`Starting global auto scan with adaptive interval (base ${getEffectiveSyncIntervalSeconds()} seconds)`);
+    scheduleNext();
   }
 
   // 鍚姩鑷姩鎵弿瀹氭椂浠诲姟
@@ -1707,6 +2234,3 @@ async function startServer() {
 }
 
 startServer();
-
-
-

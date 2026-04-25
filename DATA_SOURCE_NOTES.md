@@ -1,75 +1,73 @@
-# 数据源抓取注意事项（Trade500 + HGA）
-
-> 更新时间：2026-03-28  
+# 数据源抓取说明（Sporttery + 500 + HGA）
+> 更新时间：2026-04-23  
 > 适用项目：`D:\afk`
 
 ## 1. 总体原则
-- 先抓 Trade500（主链路），再用 HGA 做皇冠赔率/让球补强。
-- 当 HGA 数据不完整时，不回退到旧抓取逻辑；按当前系统规则仅保留符合完整度要求的数据。
-- 所有请求必须带浏览器 `User-Agent`，并启用重试与超时控制。
+- 主客队名以 Sporttery 为唯一主权来源（落库不被补丁源覆盖）。
+- 同步遵循“变更才覆盖”：数据无变化返回 `unchanged`。
+- HGA/500 任一链路失败不应阻断主链路，按兜底规则继续。
+- 失效数据不保留历史残留：本轮抓不到即写空，前端显示 `-`。
 
-## 1.1 全项目统一抓取间隔建议
-- 推荐统一抓取间隔：**90 秒**。
-- 最小允许间隔：**60 秒**。
-- 比赛列表“同步采集数据”按钮必须遵循该间隔：
-  - 点击时主动执行一次抓取；
-  - 若距离上次抓取未到间隔，按钮禁用并显示倒计时，不允许再次触发。
+## 2. 第一层主源（Sporttery）
+### 2.1 来源
+- 胜平负（had）：`https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry?channel=c&poolCode=had`
+- 让球胜平负（hhad）：`https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry?channel=c&poolCode=hhad`
+- 总进球（ttg）：`https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry?channel=c&poolCode=ttg`
 
-## 2. Trade500 数据源要求
+### 2.2 字段映射
+- `had.h/d/a` -> `j_w/j_d/j_l`
+- `hhad.h/d/a` -> `j_hw/j_hd/j_hl`
+- `hhad.goalLineValue`（兜底 `goalLine`）-> `jingcai_handicap`
+- `ttg.s0..s7` -> `c_goal`（`0球` 到 `7+球`）
 
-### 2.1 主链路 URL（固定）
-- 竞彩胜平负：`https://trade.500.com/static/public/jczq/newxml/pl/pl_nspf_2.xml`
-- 竞彩让球胜平负：`https://trade.500.com/static/public/jczq/newxml/pl/pl_spf_2.xml`
-- 皇冠赔率补强（odds.xml，按 host 兜底）：
+### 2.3 匹配规则
+1. 严格：`match_id = {matchDate}|{matchNum}`
+2. 兜底：同比赛日 + 归一化主客队 + 分钟级开赛时间
+
+## 3. 第二层补强（500）
+### 3.1 皇冠胜平负
+- 主补强来源：`live.500.com`（按 `fid` 抓公司 280 欧赔）
+- 匹配键优先级：
+1. `match_id` 精确匹配
+2. `round` 匹配
+3. `日期 + HH:mm + 归一化主客队`（使用球队别名映射）
+
+- 次补强来源（仅补空）：`trade.500 odds.xml`
   - `https://www.500.com/static/public/jczq/xml/odds/odds.xml`
   - `https://trade.500.com/static/public/jczq/xml/odds/odds.xml`
   - `https://ews.500.com/static/public/jczq/xml/odds/odds.xml`
 
-### 2.2 抓取频率建议
-- `pl_nspf_2.xml` / `pl_spf_2.xml`：建议 **30-60 秒** 一次。
-- `odds.xml`：建议 **60 秒** 一次（该文件有 `max-age=60` 特征）。
-- 全量“同步采集数据”按钮触发时：允许立刻强制抓取一次。
+### 3.2 皇冠让球
+- HGA 失败/超时/锁定时，使用 `https://trade.500.com/jczq/` 兜底补让球（`c_h`）。
 
-### 2.3 必须执行的校验
-- 新鲜度校验：日期与当前日期偏差超过 2 天视为陈旧，直接丢弃。
-- 304 处理：命中 `ETag/Last-Modified` 返回 304 时，必须复用本地缓存正文，不可按空数据处理。
-- `matchnum` 对齐：优先 `date|matchnum`，失败再按 `matchnum` 兜底匹配。
+## 4. HGA 链路
+### 4.1 开启时
+- 抓皇冠胜平负、让球、全场大小球（OU）。
+- OU 仅采集全场标签：
+  - 盘口：`RATIO_OUO / RATIO_OUU`
+  - 赔率：`IOR_OUC`（大）/ `IOR_OUH`（小）
 
-## 3. HGA 数据源要求
+### 4.2 异常时
+- 账号锁定/密码错误会进入保护逻辑，避免高频重试。
+- HGA 失败轮次不保留旧 OU 残留：`c_ou` 清空，前端显示 `-`。
 
-### 3.1 接口与登录要求
-- 登录接口：`transform_nl.php`（`chk_login`）拿 `uid` 后才能抓业务数据。
-- 业务接口：
-  - `get_game_list`（today/early）
-  - `get_game_OBT`（让球盘口）
-- 兜底接口：当 `transform_nl.php` 无有效数据时，再尝试 `transform.php`。
+## 5. 映射规则（球队别名）
+- 映射完全用户可控：只读取用户配置，不自动混入默认映射。
+- 映射用于跨源匹配（含 HGA、live.500 的队名归一化匹配）。
+- 建议使用“同义名 -> 统一名”方式维护，避免一队多写法。
 
-### 3.2 路由规则（必须）
-- `sourceShowtype=today` 的比赛：先 `today`，再 `early`，再 `parlay`。
-- `sourceShowtype=early` 的比赛：先 `early`，再 `today`，再 `parlay`。
-- 同场多次请求结果要合并去重，不只取单次返回。
+## 6. 写库口径（关键）
+- `c_w/c_d/c_l`：本轮有效则写值，否则写 `0`（前端显示 `-`）。
+- `c_h`：本轮抓到则写数组，否则写空数组。
+- `c_ou`：本轮抓到则写数组，否则写空数组。
+- 不再用历史旧值回填失效皇冠字段，避免套利误判。
 
-### 3.3 抓取频率建议
-- `get_game_list`：建议 **60 秒** 一次。
-- `get_game_OBT`：建议单场 **60-90 秒** 一次，避免过于密集请求。
-- 并发建议：单轮 OBT 并发控制在 **3**（当前代码已按该级别设计）。
+## 7. 前端展示口径
+- 数值 `<= 0` 或空数组均显示 `-`。
+- 比赛列表显示“最新一批抓取数据”，不再死卡“今天写入”。
 
-### 3.4 失败识别与恢复
-- `CheckEMNU`：视为会话失效，必须重登后重试。
-- `<code>noData</code>` 或 `VariableStandard`：按无盘口处理，继续后续兜底链路。
-- 网络失败（超时/连接中断）：按退避重试处理，不可立即判死。
-
-### 3.5 完整度要求
-- 皇冠让球按当前业务规则要求：每场目标为 **3 组**。
-- 若源端未返回足够盘口，保留“源端不完整”判定，不伪造盘口。
-
-## 4. 现在线路执行顺序（项目内）
-1. 抓 Trade500 XML 主数据（竞彩基础盘 + 让球盘）。
-2. 抓 Trade500 odds.xml 做皇冠赔率补强（多 host + 新鲜度校验）。
-3. 抓 HGA 列表与 OBT，对皇冠让球做补强（含会话恢复与路由兜底）。
-4. 对结果做完整度过滤后再入库。
-
-## 5. 运维建议
-- 每天首次启动后先执行一次手动“同步采集数据”，确认两个源可达。
-- 若短时间连续出现 HGA 超时，优先检查网络出口与目标站点连通性，再看账号会话状态。
-- 对抓取日志建议至少保留 7 天，用于复盘“无数据窗口”和源端波动。
+## 8. 排查顺序（建议）
+1. 看 `scrape_health_logs`：本轮状态、`hga_status`、`note`。
+2. 看抓取日志：各链路命中数（sporttery/live500/odds.xml/hga）。
+3. 查库字段：`c_w/c_d/c_l`、`c_h`、`c_ou`、`c_goal`。
+4. 最后核对 `/api/matches` 返回与页面渲染。

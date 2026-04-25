@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Card, Col, Empty, InputNumber, Row, Select, Space, Tag, Typography } from 'antd';
 import axios from 'axios';
 import type { HedgeStrategy } from '../types';
-import { normalizeCrownTarget, normalizeParlaySideLabel, parseCrownBetType, parseParlayRawSide, sideToLabel } from '../shared/oddsText';
+import { normalizeCrownTarget, normalizeParlaySideLabel, parseParlayRawSide, sideToLabel } from '../shared/oddsText';
+import { parseCrownBetTypeCompat } from '../shared/crownBetTypeCompat';
 
 const { Title, Text } = Typography;
 
@@ -57,16 +58,16 @@ const calcGrossReturnByGoalDiff = (
 
   if (pick.side === 'D') {
     const score = h - Math.abs(dg);
-    if (score >= 0.5) return a * o;
-    if (score === 0.25) return a * ((o + 1) / 2);
+    if (score >= 0.5) return a * (1 + o);
+    if (score === 0.25) return a * (1 + o / 2);
     if (score === 0) return a;
     if (score === -0.25) return a * 0.5;
     return 0;
   }
 
   const score = pick.side === 'W' ? dg + h : -dg + h;
-  if (score >= 0.5) return a * o;
-  if (score === 0.25) return a * ((o + 1) / 2);
+  if (score >= 0.5) return a * (1 + o);
+  if (score === 0.25) return a * (1 + o / 2);
   if (score === 0) return a;
   if (score === -0.25) return a * 0.5;
   return 0;
@@ -93,7 +94,7 @@ const calcSettleRatioByGoalDiff = (
 };
 
 const parseCrownBetSide = (raw: string): { side: MatchOutcome; handicap?: number; isStandard: boolean } => {
-  const parsed = parseCrownBetType(raw);
+  const parsed = parseCrownBetTypeCompat(raw);
   const side: MatchOutcome = parsed.side === 'home' ? 'W' : parsed.side === 'draw' ? 'D' : 'L';
   return { side, handicap: parsed.handicap, isStandard: parsed.kind === 'std' };
 };
@@ -679,7 +680,7 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
       const matchIndex = Number(bet.match_index) === 1 ? 1 : 0;
       const meta = matchMeta[matchIndex];
       const section = sections[matchIndex];
-      const parsed = parseCrownBetType(normalizeCrownTarget(String(bet.type || '')));
+      const parsed = parseCrownBetTypeCompat(normalizeCrownTarget(String(bet.type || '')));
       const side: MatchOutcome = parsed.side === 'home' ? 'W' : parsed.side === 'draw' ? 'D' : 'L';
       const crownPool = parsed.kind === 'ah' ? meta.crownHandicap : meta.crownStandard;
 
@@ -761,15 +762,16 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <Text style={metricLabelStyle}>胜负收益:</Text>
+              <Text style={metricLabelStyle}>中奖收益:</Text>
               <Text style={metricValueStyle}>{signedCurrency(row.winLossProfit)}</Text>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <Text style={metricLabelStyle}>返水收益:</Text>
               <Text style={metricValueStyle}>{signedCurrency(row.rebate)}</Text>
             </div>
+            <div style={{ borderTop: '1px dashed #d9d9d9', margin: '8px 0' }} />
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <Text strong style={metricLabelStyle}>总利润:</Text>
+              <Text strong style={metricLabelStyle}>总收益:</Text>
               <Text strong style={metricValueStyle}>{signedCurrency(row.total)}</Text>
             </div>
           </div>
@@ -1035,4 +1037,3 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
 };
 
 export default ParlayPlanDetailContent;
-

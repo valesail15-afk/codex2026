@@ -36,17 +36,17 @@ function validateStrategy(strategy: HedgeStrategy, scene: string): string[] {
     errors.push(`${scene}: min_profit mismatch`);
   }
 
-  if (!isFiniteNumber(strategy.user_invest) || strategy.user_invest <= 0) {
-    errors.push(`${scene}: invalid user_invest`);
+  if (!isFiniteNumber(strategy.total_invest) || strategy.total_invest <= 0) {
+    errors.push(`${scene}: invalid total_invest`);
   } else {
-    const calcRate = strategy.min_profit / strategy.user_invest;
+    const calcRate = strategy.min_profit / strategy.total_invest;
     if (!almostEqual(calcRate, strategy.min_profit_rate, 1e-6)) {
       errors.push(`${scene}: min_profit_rate mismatch`);
     }
   }
 
-  if (!isFiniteNumber(strategy.total_invest) || strategy.total_invest <= 0) {
-    errors.push(`${scene}: invalid total_invest`);
+  if (!isFiniteNumber(strategy.user_invest) || strategy.user_invest <= 0) {
+    errors.push(`${scene}: invalid user_invest`);
   }
   if (!isFiniteNumber(strategy.rebate)) {
     errors.push(`${scene}: invalid rebate`);
@@ -74,7 +74,7 @@ function runSingleChecks(sampleLimit = 30): string[] {
     .all(sampleLimit) as any[];
 
   const errors: string[] = [];
-  const baseTypes: Array<'jingcai' | 'crown' | 'hg'> = ['jingcai', 'crown', 'hg'];
+  const baseTypes: Array<'jingcai' | 'crown' | 'hg' | 'goal_hedge'> = ['jingcai', 'crown', 'hg', 'goal_hedge'];
 
   for (const row of rows) {
     const jcOdds = {
@@ -212,6 +212,39 @@ function runCrownHandicapScenarioChecks(): string[] {
     }
   }
 
+  // 覆盖“客胜+1/+2/+3”在主胜净胜1~4球下的命中/走水/亏完规则，避免单场验证遗漏皇冠让球分支
+  const ahCoverageCases = [
+    {
+      type: 'AH_AWAY(+1)',
+      expected: { 1: 'push', 2: 'lose', 3: 'lose', 4: 'lose' } as Record<number, 'win' | 'push' | 'lose'>,
+    },
+    {
+      type: 'AH_AWAY(+2)',
+      expected: { 1: 'win', 2: 'push', 3: 'lose', 4: 'lose' } as Record<number, 'win' | 'push' | 'lose'>,
+    },
+    {
+      type: 'AH_AWAY(+3)',
+      expected: { 1: 'win', 2: 'win', 3: 'push', 4: 'lose' } as Record<number, 'win' | 'push' | 'lose'>,
+    },
+  ];
+
+  const classify = (coeff: number) => {
+    if (!Number.isFinite(coeff) || coeff <= EPS) return 'lose' as const;
+    if (almostEqual(coeff, 1, 1e-9)) return 'push' as const;
+    return 'win' as const;
+  };
+
+  for (const scene of ahCoverageCases) {
+    for (const dg of [1, 2, 3, 4]) {
+      const coeff = ArbitrageEngine.getReturnCoefficient(scene.type, 1, dg);
+      const actual = classify(coeff);
+      const expected = scene.expected[dg];
+      if (actual !== expected) {
+        errors.push(`ah-coverage mismatch: type=${scene.type} dg=${dg} actual=${actual} expected=${expected} coeff=${coeff}`);
+      }
+    }
+  }
+
   const fullWinReturn = ArbitrageEngine.getReturnCoefficient('主胜(-1/1.5)', 0.87, 2);
   if (!almostEqual(fullWinReturn, 1.87, 1e-9)) {
     errors.push(`scenario:return: expected full-win return 1.87 but got ${fullWinReturn}`);
@@ -272,7 +305,10 @@ function runCrownHandicapScenarioChecks(): string[] {
 
     if (strategies.length > 0) {
       const hasNonHandicapBet = strategies.some((s) =>
-        s.crown_bets.some((b) => !b.type.includes('主胜(') && !b.type.includes('客胜('))
+        s.crown_bets.some((b) => {
+          const type = String(b.type || '');
+          return !type.startsWith('AH_HOME(') && !type.startsWith('AH_AWAY(');
+        })
       );
       if (hasNonHandicapBet) {
         errors.push(`scenario:${i}: generated non-handicap crown bet unexpectedly`);

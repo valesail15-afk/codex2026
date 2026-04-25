@@ -40,6 +40,16 @@
   background: #fff;
 }
 
+.match-list-table .ant-table-thead > tr > th {
+  padding: 10px 12px !important;
+  white-space: nowrap;
+}
+
+.match-list-table .ant-table-tbody > tr > td {
+  padding: 10px 12px !important;
+  vertical-align: top;
+}
+
 @media (max-width: 768px) {
   .matrix-responsive-table {
     min-width: 860px;
