@@ -1811,7 +1811,15 @@ export class CrawlerService {
     const includeRaw = typeof options === 'boolean' ? options : options.includeRaw === true;
     const suppressAutoUpsert = typeof options === 'object' && options?.suppressAutoUpsert === true;
     const fetchedAt = formatLocalDbDateTime();
-    const sportteryBase = await this.fetchSportteryAsPrimaryMatches();
+    let sportteryBase = await this.fetchSportteryAsPrimaryMatches();
+    try {
+      const tradeRows = await this.fetchTrade500MatchesFromXml();
+      if (tradeRows.length > 0) {
+        sportteryBase = this.mergeTrade500JingcaiData(sportteryBase, tradeRows);
+      }
+    } catch (err: any) {
+      console.warn(`Trade500 jingcai merge skipped in snapshot build: ${err?.message || err}`);
+    }
     const trade500Base = await this.fetchTrade500AsPrimaryMatches().catch(() => []);
 
     const stageLive = await this.enrichWithLive500CrownOdds(sportteryBase.map((m) => ({ ...m })));
@@ -2824,6 +2832,14 @@ export class CrawlerService {
     let sportteryPrimaryError = '';
     try {
       baseMatches = await this.fetchSportteryAsPrimaryMatches();
+      try {
+        const tradeRows = await this.fetchTrade500MatchesFromXml();
+        if (tradeRows.length > 0) {
+          baseMatches = this.mergeTrade500JingcaiData(baseMatches, tradeRows);
+        }
+      } catch (mergeErr: any) {
+        console.warn(`Trade500 jingcai merge skipped in sync chain: ${mergeErr?.message || mergeErr}`);
+      }
       this.lastFetchMeta.primary_source = 'sporttery';
       baseMatches = await this.enrichWithLive500CrownOdds(baseMatches);
       baseMatches = await this.enrichWithOdds500CrownMarkets(baseMatches);
@@ -5115,7 +5131,13 @@ export class CrawlerService {
         }
         if (hhad && this.isValidExternalOdds(hhad.odds)) {
           next.jingcaiHandicapOdds = hhad.odds;
-          next.jingcaiHandicap = hhad.handicapLine || next.jingcaiHandicap || '-';
+          const hhadLine = String(hhad.handicapLine || '').trim();
+          const isUnavailable = !hhadLine || hhadLine === '-' || hhadLine === '未开售';
+          if (!isUnavailable) {
+            next.jingcaiHandicap = hhadLine;
+          } else {
+            next.jingcaiHandicap = next.jingcaiHandicap || '-';
+          }
           hhadHit += 1;
         }
         return next;
@@ -5367,7 +5389,7 @@ export class CrawlerService {
       });
       (out[out.length - 1] as any).__handicapOdds = handicap.odds || { win: '-', draw: '-', lose: '-' };
       (out[out.length - 1] as any).__regularHandicap = dom?.regularHandicap || '0';
-      (out[out.length - 1] as any).__jingcaiHandicap = '未开售';
+      (out[out.length - 1] as any).__jingcaiHandicap = dom?.jingcaiHandicap || '-';
     }
 
     console.log(`Trade500 XML gray source fetched ${out.length} matches`);
@@ -5393,8 +5415,24 @@ export class CrawlerService {
             .get()
             .filter(Boolean);
 
-          const regular = this.normalizeNumericHandicap(parts[0] || '0');
-          const rawJingcai = parts[1] || String($(element).attr('data-rangqiu') || '').trim() || '-';
+          const rangCell = $(element).find('td.td-rang').first();
+          const rangTextLines = String(rangCell.text() || '')
+            .replace(/\r/g, '')
+            .split(/\n+/)
+            .map((line) => line.replace(/\s+/g, '').replace(/^单关/u, '').trim())
+            .filter(Boolean);
+          const signedInCell = (String(rangCell.text() || '').match(/[+-]\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?/g) || [])
+            .map((s) => s.trim())
+            .filter(Boolean);
+          const line0 = parts[0] || rangTextLines[0] || '';
+          const line1 =
+            parts[1] ||
+            rangTextLines[1] ||
+            signedInCell[0] ||
+            String($(element).attr('data-rangqiu') || '').trim() ||
+            '-';
+          const regular = this.normalizeNumericHandicap(line0 || '0');
+          const rawJingcai = line1;
           const jingcai = this.normalizeSignedHandicap(rawJingcai);
           const dataDate = String($(element).attr('data-matchdate') || processDate).trim();
           const dataTime = String($(element).attr('data-matchtime') || '').trim();
@@ -5953,19 +5991,33 @@ export class CrawlerService {
     }
 
     const grouped = new Map<string, Trade500XmlRow[]>();
+    const byExactId = new Map<string, Trade500XmlRow[]>();
     for (const item of tradeRows) {
       const key = `${this.normalizeNameForMatch(item.homeTeam)}|${this.normalizeNameForMatch(item.awayTeam)}`;
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key)!.push(item);
+      const exactId = `${String(item.date || '').trim()}|${String(item.matchnum || '').trim()}`;
+      if (exactId && exactId.includes('|')) {
+        if (!byExactId.has(exactId)) byExactId.set(exactId, []);
+        byExactId.get(exactId)!.push(item);
+      }
     }
     for (const rows of grouped.values()) {
       rows.sort((a, b) => a.matchTime.localeCompare(b.matchTime));
     }
+    for (const rows of byExactId.values()) {
+      rows.sort((a, b) => a.matchTime.localeCompare(b.matchTime));
+    }
 
     let patchedCount = 0;
+    const isUnavailableHandicap = (value?: string) => {
+      const text = String(value || '').trim();
+      return !text || text === '-' || text === '未开售';
+    };
     const merged = legacyMatches.map((legacy) => {
       const key = `${this.normalizeNameForMatch(legacy.homeTeam)}|${this.normalizeNameForMatch(legacy.awayTeam)}`;
-      const candidates = grouped.get(key) || [];
+      const exactCandidates = byExactId.get(String(legacy.id || '').trim()) || [];
+      const candidates = exactCandidates.length > 0 ? exactCandidates : grouped.get(key) || [];
       if (candidates.length === 0) {
         return legacy;
       }
@@ -5994,11 +6046,30 @@ export class CrawlerService {
         return legacy;
       }
 
+      // Trade500 XML 仅提供让球赔率，不稳定提供让球盘口文本。
+      // 当盘口文本缺失时，不能用“未开售/0”覆盖已有有效盘口。
+      const normalizedRegular = this.normalizeNumericHandicap(regularHandicap);
+      const normalizedJc = this.normalizeSignedHandicap(jingcaiHandicap);
+      const legacyRegular = this.normalizeNumericHandicap(legacy.handicap);
+      const legacyJc = this.normalizeSignedHandicap(legacy.jingcaiHandicap);
+      const nextRegular =
+        normalizedRegular && normalizedRegular !== '0'
+          ? normalizedRegular
+          : legacyRegular || normalizedRegular || legacy.handicap || '0';
+      const nextJc =
+        !isUnavailableHandicap(normalizedJc)
+          ? normalizedJc
+          : !isUnavailableHandicap(legacyJc)
+            ? legacyJc
+            : !isUnavailableHandicap(nextRegular)
+              ? this.normalizeSignedHandicap(nextRegular) || nextRegular
+              : legacy.jingcaiHandicap || '-';
+
       patchedCount += 1;
       return {
         ...legacy,
-        handicap: regularHandicap || legacy.handicap || '0',
-        jingcaiHandicap: jingcaiHandicap || legacy.jingcaiHandicap || '-',
+        handicap: nextRegular || legacy.handicap || '0',
+        jingcaiHandicap: nextJc || legacy.jingcaiHandicap || '-',
         jingcaiOdds: chosen.odds,
         jingcaiHandicapOdds: handicapOdds,
       };
