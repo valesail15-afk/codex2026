@@ -3,7 +3,11 @@ import path from 'path';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 
-const dbPath = path.resolve(process.cwd(), 'arbitrage.db');
+export const dbPathSource = process.env.DB_PATH ? 'env' : 'default';
+export const dbPath = process.env.DB_PATH
+  ? path.resolve(process.env.DB_PATH)
+  : path.resolve(process.cwd(), 'arbitrage.db');
+console.log(`[db] using database path: ${dbPath}`);
 const db = new Database(dbPath);
 
 export function formatLocalDbDateTime(date = new Date()) {

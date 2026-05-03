@@ -5,6 +5,7 @@ import axios from 'axios';
 import { invertHandicap, normalizeCrownTarget } from '../shared/oddsText';
 import { parseCrownBetTypeCompat } from '../shared/crownBetTypeCompat';
 import type { CrownBet, HedgeStrategy } from '../types';
+import BetStakeCalculatorModal from './BetStakeCalculatorModal';
 
 const { Title, Text } = Typography;
 
@@ -145,6 +146,7 @@ const HgPlanDetailContent: React.FC<HgPlanDetailContentProps> = ({ matchId, init
     })();
   }, [initialStrategy, matchId]);
 
+  const jcShare = Number(settings?.default_jingcai_share ?? matchInfo?.j_s ?? 0);
   const crownShare = Number(settings?.default_crown_share ?? matchInfo?.c_s ?? 0);
   const crownRebate = Number(settings?.default_crown_rebate ?? matchInfo?.c_r ?? 0.02);
 
@@ -399,7 +401,7 @@ const HgPlanDetailContent: React.FC<HgPlanDetailContentProps> = ({ matchId, init
         </Title>
       ) : null}
 
-      <Card title="下注方案详情">
+      <Card title="下注方案详情" extra={<BetStakeCalculatorModal strategy={strategy} shares={{ jingcai: jcShare, crown: crownShare }} />}>
         <div style={{ overflowX: 'auto', marginBottom: 16 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <thead>

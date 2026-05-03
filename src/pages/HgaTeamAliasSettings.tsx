@@ -81,14 +81,22 @@ function normalizeRows(rows: HgaAliasRow[]) {
   }));
 }
 
+function getAllAliasesInRow(row: HgaAliasRow) {
+  return [
+    String(row?.jingcai_name || '').trim(),
+    String(row?.huangguan_name || '').trim(),
+    ...(Array.isArray(row?.extra_aliases) ? row.extra_aliases.map((item) => String(item || '').trim()) : []),
+  ].filter(Boolean);
+}
+
 function buildGroupsFromRows(rows: HgaAliasRow[]): HgaAliasGroup[] {
   return normalizeRows(rows)
     .map((row) => {
-      const aliases = [row.jingcai_name, row.huangguan_name, ...row.extra_aliases].map((item) => String(item || '').trim()).filter(Boolean);
+      const aliases = getAllAliasesInRow(row);
       if (aliases.length === 0) return null;
       return {
         group_id: row.group_id!,
-        canonical: aliases.slice().sort((a, b) => a.length - b.length || a.localeCompare(b, 'zh-CN'))[0],
+        canonical: String(row.jingcai_name || '').trim() || aliases[0],
         aliases,
       } as HgaAliasGroup;
     })
@@ -161,10 +169,7 @@ const HgaTeamAliasSettings: React.FC = () => {
     try {
       const normalizedRows = normalizeRows(values.hga_team_alias_rows || [])
         .map((row) => ({ ...row, extra_aliases: row.extra_aliases.slice(0, extraColumnCount) }))
-        .filter((row) => {
-          const aliases = [row.jingcai_name, row.huangguan_name, ...row.extra_aliases].map((item) => String(item || '').trim()).filter(Boolean);
-          return aliases.length > 0;
-        });
+        .filter((row) => getAllAliasesInRow(row).length > 0);
       const groups = buildGroupsFromRows(normalizedRows);
       await axios.post('/api/settings/hga/alias-groups', {
         groups,
@@ -225,7 +230,7 @@ const HgaTeamAliasSettings: React.FC = () => {
           <Title level={3} style={{ margin: 0 }}>
             球队别名映射
           </Title>
-          <Text type="secondary">默认两列（竞彩/皇冠），可新增别名列；单行只填一个值视为无效。</Text>
+          <Text type="secondary">第一列固定竞彩队名；第二列开始都是外部来源别名（365rich、皇冠等）。单行只填一个值视为无效。</Text>
         </Space>
 
         <Card className="shadow-sm">
@@ -249,9 +254,9 @@ const HgaTeamAliasSettings: React.FC = () => {
                 >
                   <div>序号</div>
                   <div>竞彩</div>
-                  <div>皇冠</div>
+                  <div>外部别名1</div>
                   {Array.from({ length: extraColumnCount }).map((_, idx) => (
-                    <div key={`extra-col-header-${idx}`}>别名{idx + 1}</div>
+                    <div key={`extra-col-header-${idx}`}>外部别名{idx + 2}</div>
                   ))}
                   <div style={{ textAlign: 'center' }}>
                     <Space size={4}>
@@ -261,7 +266,7 @@ const HgaTeamAliasSettings: React.FC = () => {
                         type="text"
                         icon={<PlusOutlined />}
                         onClick={onAddColumn}
-                        title="新增列"
+                        title="新增别名列"
                         disabled={extraColumnCount >= MAX_EXTRA_COLUMNS}
                       />
                     </Space>
@@ -274,15 +279,8 @@ const HgaTeamAliasSettings: React.FC = () => {
                     rules={[
                       {
                         validator: async (_, value: HgaAliasRow[] = []) => {
-                          const invalid = value.find((row) => {
-                            const aliasCount = [
-                              String(row?.jingcai_name || '').trim(),
-                              String(row?.huangguan_name || '').trim(),
-                              ...(Array.isArray(row?.extra_aliases) ? row.extra_aliases.map((item) => String(item || '').trim()) : []),
-                            ].filter(Boolean).length;
-                            return aliasCount === 1;
-                          });
-                          if (invalid) throw new Error('每行至少填写两个别名，单值行无效');
+                          const invalid = value.find((row) => getAllAliasesInRow(row).length === 1);
+                          if (invalid) throw new Error('每行至少填写两个别名（竞彩 + 任意外部别名），单值行无效');
                         },
                       },
                     ]}
@@ -310,7 +308,7 @@ const HgaTeamAliasSettings: React.FC = () => {
                               <Input placeholder="竞彩队名" />
                             </Form.Item>
                             <Form.Item {...field} name={[field.name, 'huangguan_name']} style={{ marginBottom: 0 }}>
-                              <Input placeholder="皇冠队名" />
+                              <Input placeholder="外部别名（如 365rich/皇冠）" />
                             </Form.Item>
                             {Array.from({ length: extraColumnCount }).map((_, aliasIdx) => (
                               <Form.Item
@@ -319,17 +317,11 @@ const HgaTeamAliasSettings: React.FC = () => {
                                 name={[field.name, 'extra_aliases', aliasIdx]}
                                 style={{ marginBottom: 0 }}
                               >
-                                <Input placeholder={`别名${aliasIdx + 1}`} />
+                                <Input placeholder={`外部别名${aliasIdx + 2}`} />
                               </Form.Item>
                             ))}
                             <div style={{ textAlign: 'center' }}>
-                              <Button
-                                danger
-                                type="text"
-                                icon={<DeleteOutlined />}
-                                onClick={() => remove(field.name)}
-                                title="删除行"
-                              />
+                              <Button danger type="text" icon={<DeleteOutlined />} onClick={() => remove(field.name)} title="删除行" />
                             </div>
                           </div>
                         ))}
@@ -389,7 +381,7 @@ const HgaTeamAliasSettings: React.FC = () => {
                 key: 'jingcai_name',
               },
               {
-                title: '皇冠',
+                title: '外部队名',
                 dataIndex: 'huangguan_name',
                 key: 'huangguan_name',
               },
@@ -402,7 +394,7 @@ const HgaTeamAliasSettings: React.FC = () => {
               {
                 title: '来源',
                 key: 'source',
-                render: () => <Tag color="blue">时间+欧赔兜底</Tag>,
+                render: () => <Tag color="blue">时间+亚赔指纹</Tag>,
               },
               {
                 title: '最近命中比赛',

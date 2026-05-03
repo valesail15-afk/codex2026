@@ -4,6 +4,7 @@ import axios from 'axios';
 import type { HedgeStrategy } from '../types';
 import { normalizeCrownTarget, normalizeParlaySideLabel, parseParlayRawSide, sideToLabel } from '../shared/oddsText';
 import { parseCrownBetTypeCompat } from '../shared/crownBetTypeCompat';
+import BetStakeCalculatorModal from './BetStakeCalculatorModal';
 
 const { Title, Text } = Typography;
 
@@ -160,8 +161,12 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
         crownRebate: Number(settingRes.data?.default_crown_rebate || 0.02),
       });
 
-    } catch {
-      message.error('加载二串一方案失败');
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        message.warning('该二串一方案已过期，请刷新列表获取最新机会');
+      } else {
+        message.error(`加载二串一方案失败: ${err.response?.data?.error || err.message}`);
+      }
       setRecord(null);
       setSelected(null);
       if (!loadedNotifiedRef.current) {
@@ -286,6 +291,24 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
     ];
   }, [parsedSides, record, selectedStrategy, settingsMeta, tempSecondCrownOdds]);
 
+  const parlayPrimaryBetDisplay = useMemo(() => {
+    if (!record) return undefined;
+    const combinedOdds = parsedSides.jcOdds1 > 0 && parsedSides.jcOdds2 > 0
+      ? parsedSides.jcOdds1 * parsedSides.jcOdds2
+      : Number(record?.combined_odds || 0);
+
+    return {
+      target: `${normalizeParlaySideLabel(record?.side_1 || '-')} × ${normalizeParlaySideLabel(record?.side_2 || '-')}`,
+      odds: combinedOdds,
+      oddsDisplay:
+        parsedSides.jcOdds1 > 0 && parsedSides.jcOdds2 > 0
+          ? `${parsedSides.jcOdds1.toFixed(2)} × ${parsedSides.jcOdds2.toFixed(2)} = ${combinedOdds.toFixed(2)}`
+          : combinedOdds > 0
+          ? combinedOdds.toFixed(2)
+          : '-',
+    };
+  }, [parsedSides, record]);
+
   const outcomeRows = useMemo(() => {
     if (!selectedStrategy || !record) return [] as any[];
 
@@ -303,13 +326,13 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
 
     const titleMap: Record<string, string> = {
       w_w: '第一场主胜 + 第二场主胜',
-      w_d: '第一场主胜 + 第二场平',
+      w_d: '第一场主胜 + 第二场平局',
       w_l: '第一场主胜 + 第二场客胜',
-      d_w: '第一场平 + 第二场主胜',
-      d_d: '第一场平 + 第二场平',
-      d_l: '第一场平 + 第二场客胜',
+      d_w: '第一场平局 + 第二场主胜',
+      d_d: '第一场平局 + 第二场平局',
+      d_l: '第一场平局 + 第二场客胜',
       l_w: '第一场客胜 + 第二场主胜',
-      l_d: '第一场客胜 + 第二场平',
+      l_d: '第一场客胜 + 第二场平局',
       l_l: '第一场客胜 + 第二场客胜',
     };
 
@@ -417,7 +440,7 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
 
   const firstStageRows = useMemo(() => {
     const sideOrder: MatchOutcome[] = ['W', 'D', 'L'];
-    const titleMap: Record<MatchOutcome, string> = { W: '第一场主胜', D: '第一场平', L: '第一场客胜' };
+    const titleMap: Record<MatchOutcome, string> = { W: '第一场主胜', D: '第一场平局', L: '第一场客胜' };
     return sideOrder.map((side) => {
       const rows = outcomeRows.filter((r: any) => r.first === side);
       if (!rows.length) {
@@ -796,6 +819,11 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
           title="下注方案详情"
           extra={
             <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+              <BetStakeCalculatorModal
+                strategy={selectedStrategy}
+                primaryBetDisplay={parlayPrimaryBetDisplay}
+                shares={{ jingcai: settingsMeta.jcShare, crown: settingsMeta.crownShare }}
+              />
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 220 }}>
                 <div style={{ fontSize: 13, color: '#595959', whiteSpace: 'nowrap' }}>基准平台</div>
                 <Select

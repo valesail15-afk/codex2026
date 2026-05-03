@@ -10,6 +10,7 @@ import {
   ClockCircleOutlined,
 } from '@ant-design/icons';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, Navigate, useNavigate } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import axios from 'axios';
 import Dashboard from './pages/Dashboard';
 import MatchList from './pages/MatchList';
@@ -409,61 +410,72 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; adminOnly?: boolean 
   return <>{children}</>;
 };
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
+
 export default function App() {
   return (
-    <ConfigProvider
-      theme={{
-        algorithm: theme.defaultAlgorithm,
-        token: {
-          colorPrimary: '#1890ff',
-          borderRadius: 8,
-        },
-      }}
-    >
-      <AntApp>
-        <Router>
-          <AuthProvider>
-            <ErrorBoundary>
-              <Routes>
-                <Route
-                  path="/login"
-                  element={
-                    <AuthContext.Consumer>
-                      {(auth) => (auth?.user ? <Navigate to="/" replace /> : <Login onLoginSuccess={async () => auth && (await auth.login())} />)}
-                    </AuthContext.Consumer>
-                  }
-                />
-                <Route
-                  path="/*"
-                  element={
-                    <ProtectedRoute>
-                      <AppLayout>
-                        <Routes>
-                          <Route path="/" element={<Dashboard />} />
-                          <Route path="/matches" element={<MatchList />} />
-                          <Route path="/calculator" element={<Calculator />} />
-                          <Route path="/calculator/:matchId" element={<Calculator />} />
-                          <Route path="/calculator/parlay/:id" element={<ParlayCalculator />} />
-                          <Route path="/settings" element={<Settings />} />
-                          <Route path="/settings/hga-team-aliases" element={<HgaTeamAliasSettings />} />
-                          <Route
-                            path="/admin/users"
-                            element={
-                              <ProtectedRoute adminOnly>
-                                <UserManagement />
-                              </ProtectedRoute>
-                            }
-                          />
-                        </Routes>
-                      </AppLayout>
-                    </ProtectedRoute>
-                  }
-                />
-              </Routes>
-            </ErrorBoundary>
-          </AuthProvider>
-        </Router>
-      </AntApp>
-    </ConfigProvider>
+    <QueryClientProvider client={queryClient}>
+      <ConfigProvider
+        theme={{
+          algorithm: theme.defaultAlgorithm,
+          token: {
+            colorPrimary: '#1890ff',
+            borderRadius: 8,
+          },
+        }}
+      >
+        <AntApp>
+          <Router>
+            <AuthProvider>
+              <ErrorBoundary>
+                <Routes>
+                  <Route
+                    path="/login"
+                    element={
+                      <AuthContext.Consumer>
+                        {(auth) => (auth?.user ? <Navigate to="/" replace /> : <Login onLoginSuccess={async () => auth && (await auth.login())} />)}
+                      </AuthContext.Consumer>
+                    }
+                  />
+                  <Route
+                    path="/*"
+                    element={
+                      <ProtectedRoute>
+                        <AppLayout>
+                          <Routes>
+                            <Route path="/" element={<Dashboard />} />
+                            <Route path="/matches" element={<MatchList />} />
+                            <Route path="/calculator" element={<Calculator />} />
+                            <Route path="/calculator/:matchId" element={<Calculator />} />
+                            <Route path="/calculator/parlay/:id" element={<ParlayCalculator />} />
+                            <Route path="/settings" element={<Settings />} />
+                            <Route path="/settings/hga-team-aliases" element={<HgaTeamAliasSettings />} />
+                            <Route
+                              path="/admin/users"
+                              element={
+                                <ProtectedRoute adminOnly>
+                                  <UserManagement />
+                                </ProtectedRoute>
+                              }
+                            />
+                          </Routes>
+                        </AppLayout>
+                      </ProtectedRoute>
+                    }
+                  />
+                </Routes>
+              </ErrorBoundary>
+            </AuthProvider>
+          </Router>
+        </AntApp>
+      </ConfigProvider>
+    </QueryClientProvider>
   );
 }

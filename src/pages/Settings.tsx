@@ -12,6 +12,15 @@ type HgaAliasRow = {
   huangguan_name: string;
 };
 
+type HgaTuningParams = {
+  login_timeout_ms: number;
+  list_timeout_ms: number;
+  market_item_timeout_ms: number;
+  obt_batch_size: number;
+  obt_batch_retry: number;
+  obt_concurrency: number;
+};
+
 function parseHgaAliasMap(raw: unknown): HgaAliasRow[] {
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -42,6 +51,7 @@ const Settings: React.FC = () => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [testingHga, setTestingHga] = useState(false);
+  const [optimizingHga, setOptimizingHga] = useState(false);
   const [hgaAvgFetchSeconds, setHgaAvgFetchSeconds] = useState<number>(0);
   const [defaultHgaAliasRows, setDefaultHgaAliasRows] = useState<HgaAliasRow[]>([]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -54,6 +64,31 @@ const Settings: React.FC = () => {
     status: 'unknown',
     message: '',
     lastDecisionAt: '',
+  });
+  const [hgaTuningMeta, setHgaTuningMeta] = useState<{
+    effective: HgaTuningParams;
+    persisted: HgaTuningParams;
+    lastOptimizeAt: string;
+    lastBestScore: number;
+  }>({
+    effective: {
+      login_timeout_ms: 25000,
+      list_timeout_ms: 30000,
+      market_item_timeout_ms: 22000,
+      obt_batch_size: 8,
+      obt_batch_retry: 2,
+      obt_concurrency: 2,
+    },
+    persisted: {
+      login_timeout_ms: 25000,
+      list_timeout_ms: 30000,
+      market_item_timeout_ms: 22000,
+      obt_batch_size: 8,
+      obt_batch_retry: 2,
+      obt_concurrency: 2,
+    },
+    lastOptimizeAt: '',
+    lastBestScore: 0,
   });
   const sessionMode = Form.useWatch('session_mode', form) || 'single';
   const hgaTeamAliasRows = Form.useWatch('hga_team_alias_rows', form) || [];
@@ -115,6 +150,29 @@ const Settings: React.FC = () => {
       status: String(data.sync_snapshot_status || 'unknown'),
       message: String(data.sync_snapshot_message || ''),
       lastDecisionAt: String(data.sync_snapshot_last_decision_at || ''),
+    });
+    const effective = data.hga_tuning_effective || {};
+    const persisted = data.hga_tuning_persisted || {};
+    const lastOpt = data.hga_tune_last_optimize_result || {};
+    setHgaTuningMeta({
+      effective: {
+        login_timeout_ms: Number(effective.login_timeout_ms || 25000),
+        list_timeout_ms: Number(effective.list_timeout_ms || 30000),
+        market_item_timeout_ms: Number(effective.market_item_timeout_ms || 22000),
+        obt_batch_size: Number(effective.obt_batch_size || 8),
+        obt_batch_retry: Number(effective.obt_batch_retry || 2),
+        obt_concurrency: Number(effective.obt_concurrency || 2),
+      },
+      persisted: {
+        login_timeout_ms: Number(persisted.login_timeout_ms || 25000),
+        list_timeout_ms: Number(persisted.list_timeout_ms || 30000),
+        market_item_timeout_ms: Number(persisted.market_item_timeout_ms || 22000),
+        obt_batch_size: Number(persisted.obt_batch_size || 8),
+        obt_batch_retry: Number(persisted.obt_batch_retry || 2),
+        obt_concurrency: Number(persisted.obt_concurrency || 2),
+      },
+      lastOptimizeAt: String(lastOpt.ran_at || ''),
+      lastBestScore: Number(lastOpt.best_score || 0),
     });
   };
 
@@ -187,6 +245,35 @@ const Settings: React.FC = () => {
       setTestingHga(false);
     }
   };
+
+  const onOptimizeHgaParams = async () => {
+    setOptimizingHga(true);
+    try {
+      const res = await axios.post('/api/settings/hga/optimize-tuning', {
+        rounds: 4,
+        sample_size: 12,
+      });
+      const best = res.data?.best || {};
+      const durationSec = Number(best.duration_ms || 0) > 0 ? (Number(best.duration_ms || 0) / 1000).toFixed(1) : '-';
+      const bestScore = Number(best.score || 0);
+      if (bestScore <= -900000) {
+        message.warning(`HGA 参数自动优化完成，但全部轮次失败（最佳轮次耗时 ${durationSec}s）`);
+      } else {
+        message.success(`HGA 参数自动优化完成，最佳轮次耗时 ${durationSec}s，评分 ${bestScore}`);
+      }
+      await refreshSettings();
+    } catch (err: any) {
+      const errMessage = String(err?.response?.data?.message || err?.message || 'HGA 参数自动优化失败');
+      message.error(errMessage);
+    } finally {
+      setOptimizingHga(false);
+    }
+  };
+
+  const hgaBestScoreText = useMemo(() => {
+    if (hgaTuningMeta.lastBestScore <= -900000) return '优化失败（全部轮次失败）';
+    return String(hgaTuningMeta.lastBestScore || 0);
+  }, [hgaTuningMeta.lastBestScore]);
 
   const onExportHgaAliasMap = async () => {
     try {
@@ -329,6 +416,36 @@ const Settings: React.FC = () => {
                         title={hgaMeta.statusMessage || '暂无状态信息'}
                       />
                     </Space>
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Row gutter={16}>
+                <Col xs={24}>
+                  <Form.Item
+                    label={
+                      <Space size={8}>
+                        <span>HGA 参数自动优化</span>
+                        <Button size="small" loading={optimizingHga} onClick={onOptimizeHgaParams}>
+                          自动优化
+                        </Button>
+                      </Space>
+                    }
+                    extra="会进行多轮在线抓取测试，自动选择成功率和速度综合最优参数，并持久化到后台。"
+                  >
+                    <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 12, background: '#fafafa' }}>
+                      <Space direction="vertical" size={4}>
+                        <Text>
+                          当前参数：login={hgaTuningMeta.effective.login_timeout_ms}ms，list={hgaTuningMeta.effective.list_timeout_ms}ms，
+                          market={hgaTuningMeta.effective.market_item_timeout_ms}ms，batch={hgaTuningMeta.effective.obt_batch_size}，
+                          retry={hgaTuningMeta.effective.obt_batch_retry}，concurrency={hgaTuningMeta.effective.obt_concurrency}
+                        </Text>
+                        <Text type="secondary">
+                          最近优化时间：{hgaTuningMeta.lastOptimizeAt ? hgaTuningMeta.lastOptimizeAt.replace('T', ' ').slice(0, 19) : '-'}，
+                          最佳评分：{hgaBestScoreText}
+                        </Text>
+                      </Space>
+                    </div>
                   </Form.Item>
                 </Col>
               </Row>

@@ -1,4 +1,4 @@
-﻿import { HedgeStrategy, Handicap, CrownBet } from '../types';
+import { HedgeStrategy, Handicap, CrownBet } from '../types';
 import solver from 'javascript-lp-solver';
 
 type Side = 'W' | 'D' | 'L';
@@ -45,6 +45,16 @@ export class ArbitrageEngine {
       const total = Number(row?.total_profit);
       return Number.isFinite(total) && total > min;
     });
+  }
+
+  static monitorStrategy(strategy: HedgeStrategy, context: string) {
+    if (!strategy) return;
+    const minProfit = strategy.min_profit;
+    const rate = strategy.min_profit_rate;
+    if (minProfit < -0.01) {
+        console.error(`[ALARM] Negative Profit Detected! Context: ${context}, Profit: ${minProfit.toFixed(2)}, Rate: ${(rate * 100).toFixed(2)}%`);
+        // In a real system, this could send a message to a bot (e.g., Feishu/Telegram)
+    }
   }
 
   static parseHandicap(h: string): number {
@@ -290,7 +300,7 @@ export class ArbitrageEngine {
         lose: rebateValue,
       },
       min_profit: minProfit,
-      min_profit_rate: minProfit / totalInvest,
+      min_profit_rate: minProfit / userInvest,
       total_invest: totalInvest,
       user_invest: userInvest,
     };
@@ -416,7 +426,7 @@ export class ArbitrageEngine {
       rebate: rebateValue,
       rebates: { win: rebateValue, draw: rebateValue, lose: rebateValue },
       min_profit: minProfit,
-      min_profit_rate: minProfit / totalInvest,
+      min_profit_rate: minProfit / userInvest,
       total_invest: totalInvest,
       user_invest: userInvest,
     };
@@ -453,9 +463,9 @@ export class ArbitrageEngine {
       return this.findAllHgOpportunities(A, crownOdds, integerUnit);
     }
     const markets: Array<{ side: Side; odds: number; market: MarketType; label: string }> = [
-      { side: 'W', odds: Number(jcOdds.W || 0), market: 'normal', label: '普通胜' },
-      { side: 'D', odds: Number(jcOdds.D || 0), market: 'normal', label: '普通平' },
-      { side: 'L', odds: Number(jcOdds.L || 0), market: 'normal', label: '普通负' },
+      { side: 'W', odds: Number(jcOdds.W || 0), market: 'normal', label: '主胜' },
+      { side: 'D', odds: Number(jcOdds.D || 0), market: 'normal', label: '平局' },
+      { side: 'L', odds: Number(jcOdds.L || 0), market: 'normal', label: '客胜' },
     ];
     if (Number(jcOdds.HW || 0) > 1) markets.push({ side: 'W', odds: Number(jcOdds.HW), market: 'handicap', label: `让胜(${jcOdds.handicapLine || '0'})` });
     if (Number(jcOdds.HD || 0) > 1) markets.push({ side: 'D', odds: Number(jcOdds.HD), market: 'handicap', label: `让平(${jcOdds.handicapLine || '0'})` });
@@ -708,7 +718,7 @@ export class ArbitrageEngine {
       rebate: maxRebate,
       rebates: { win: maxRebate, draw: maxRebate, lose: maxRebate },
       min_profit: roundedMinProfit,
-      min_profit_rate: roundedMinProfit / totalInvest,
+      min_profit_rate: roundedMinProfit / userInvest,
       total_invest: totalInvest,
       user_invest: userInvest,
       goal_hedge_meta: {
@@ -869,7 +879,7 @@ export class ArbitrageEngine {
       rebate: rebateValue,
       rebates: { win: rebateValue, draw: rebateValue, lose: rebateValue },
       min_profit: minProfit,
-      min_profit_rate: minProfit / totalInvest,
+      min_profit_rate: minProfit / userInvest,
       total_invest: totalInvest,
       user_invest: userInvest,
     };
@@ -1039,7 +1049,7 @@ export class ArbitrageEngine {
       rebate: rebateValue,
       rebates: { win: rebateValue, draw: rebateValue, lose: rebateValue },
       min_profit: minProfit,
-      min_profit_rate: minProfit / totalInvest,
+      min_profit_rate: minProfit / userInvest,
       total_invest: totalInvest,
       user_invest: userInvest,
     };
@@ -1121,19 +1131,46 @@ export class ArbitrageEngine {
       return worst;
     };
 
-    const firstJcHits = (side: Side) =>
-      maxByGoalDiffs(outcomeGoalDiffs[side], (dg) =>
+    const firstJcHits = (side: Side) => {
+      const coeffs = outcomeGoalDiffs[side].map(dg => 
         this.getJingcaiSettlementByGoalDiff(jc1.side, jc1.odds, jc1.market, jc1.handicapLine, dg).c
-      ) > this.EPS;
+      );
+      return coeffs.some(c => c > this.EPS);
+    };
 
-    const parlayProfit = (side1: Side, side2: Side) =>
-      minByPairs(outcomeGoalDiffs[side1], outcomeGoalDiffs[side2], (dg1, dg2) => {
+    const firstJcAlwaysMisses = (side: Side) => {
+      const coeffs = outcomeGoalDiffs[side].map(dg => 
+        this.getJingcaiSettlementByGoalDiff(jc1.side, jc1.odds, jc1.market, jc1.handicapLine, dg).c
+      );
+      return coeffs.every(c => c < -0.5);
+    };
+
+    const parlayProfit = (side1: Side, side2: Side) => {
+      let worst = Number.POSITIVE_INFINITY;
+      for (const dg1 of outcomeGoalDiffs[side1]) {
+        for (const dg2 of outcomeGoalDiffs[side2]) {
+          const r1 = this.getJingcaiSettlementByGoalDiff(jc1.side, jc1.odds, jc1.market, jc1.handicapLine, dg1);
+          const r2 = this.getJingcaiSettlementByGoalDiff(jc2.side, jc2.odds, jc2.market, jc2.handicapLine, dg2);
+          const hit = r1.c > this.EPS && r2.c > this.EPS;
+          const ret = hit ? jc1.odds * jc2.odds : 0;
+          const val = C * (ret - 1 + rJc);
+          if (val < worst) worst = val;
+        }
+      }
+      return worst;
+    };
+    
+    const stopProfit = (side1: Side) => {
+      let worst = Number.POSITIVE_INFINITY;
+      for (const dg1 of outcomeGoalDiffs[side1]) {
         const r1 = this.getJingcaiSettlementByGoalDiff(jc1.side, jc1.odds, jc1.market, jc1.handicapLine, dg1);
-        const r2 = this.getJingcaiSettlementByGoalDiff(jc2.side, jc2.odds, jc2.market, jc2.handicapLine, dg2);
-        const ret = r1.c > this.EPS && r2.c > this.EPS ? jc1.odds * jc2.odds : 0;
-        return C * (ret - 1 + rJc);
-      });
-    const stopAfterFirstProfit = () => C * (-1 + rJc);
+        if (r1.c < -0.5) {
+            const val = C * (-1 + rJc);
+            if (val < worst) worst = val;
+        }
+      }
+      return worst === Number.POSITIVE_INFINITY ? C * (-1 + rJc) : worst;
+    };
 
     const model: any = { optimize: 'z', opType: 'max', constraints: {}, variables: {} };
     model.constraints.cap = { max: A * 20 };
@@ -1148,10 +1185,15 @@ export class ArbitrageEngine {
           model.constraints[key] = { min: -parlayProfit(s1, s2) };
           model.variables.z[key] = -1;
         }
-      } else {
+      }
+      // 关键：只要该 side 下有任何 dg 导致竞彩挂掉，就必须通过 LP 确保亏损可控
+      const coeffs = outcomeGoalDiffs[s1].map(dg => 
+        this.getJingcaiSettlementByGoalDiff(jc1.side, jc1.odds, jc1.market, jc1.handicapLine, dg).c
+      );
+      if (coeffs.some(c => c < -0.5)) {
         const key = `p_${s1}_stop`;
         requiredKeys.push(key);
-        model.constraints[key] = { min: -stopAfterFirstProfit() };
+        model.constraints[key] = { min: -stopProfit(s1) };
         model.variables.z[key] = -1;
       }
     }
@@ -1165,9 +1207,18 @@ export class ArbitrageEngine {
           return ret - 1 + settleRatio * rHg;
         });
         if (firstJcHits(s1)) {
-          for (const s2 of outcomes) v[`p_${s1}_${s2}`] = value;
-        } else {
-          v[`p_${s1}_stop`] = value;
+          for (const s2 of outcomes) {
+            const key = `p_${s1}_${s2}`;
+            v[key] = value;
+          }
+        }
+        const coeffs = outcomeGoalDiffs[s1].map(dg => 
+          this.getJingcaiSettlementByGoalDiff(jc1.side, jc1.odds, jc1.market, jc1.handicapLine, dg).c
+        );
+        if (coeffs.some(c => c < -0.5)) {
+          const key = `p_${s1}_stop`;
+          if (v[key] === undefined) v[key] = 0;
+          v[key] += value;
         }
       }
       model.variables[`h1_${i}`] = v;
@@ -1176,15 +1227,23 @@ export class ArbitrageEngine {
     c2.forEach((opt, i) => {
       const v: any = { z: 0, cap: 1 };
       for (const s1 of outcomes) {
-        if (!firstJcHits(s1)) continue;
-        for (const s2 of outcomes) {
-          v[`p_${s1}_${s2}`] = minByPairs(outcomeGoalDiffs[s1], outcomeGoalDiffs[s2], (dg1, dg2) => {
-            const firstHit = this.getJingcaiSettlementByGoalDiff(jc1.side, jc1.odds, jc1.market, jc1.handicapLine, dg1).c > this.EPS;
-            if (!firstHit) return 0;
-            const ret = this.getReturnCoefficient(opt.type, opt.odds, dg2);
-            const settleRatio = this.getSettlementRatio(opt.type, dg2);
-            return ret - 1 + settleRatio * rHg;
-          });
+        if (firstJcHits(s1)) {
+          for (const s2 of outcomes) {
+            const value = minByGoalDiffs(outcomeGoalDiffs[s2], (dg2) => {
+              const ret = this.getReturnCoefficient(opt.type, opt.odds, dg2);
+              const settleRatio = this.getSettlementRatio(opt.type, dg2);
+              return ret - 1 + settleRatio * rHg;
+            });
+            const key = `p_${s1}_${s2}`;
+            v[key] = value;
+          }
+        }
+        const coeffs = outcomeGoalDiffs[s1].map(dg => 
+          this.getJingcaiSettlementByGoalDiff(jc1.side, jc1.odds, jc1.market, jc1.handicapLine, dg).c
+        );
+        if (coeffs.some(c => c < -0.5)) {
+          const key = `p_${s1}_stop`;
+          v[key] = 0; 
         }
       }
       model.variables[`h2_${i}`] = v;
@@ -1231,10 +1290,39 @@ export class ArbitrageEngine {
       );
 
     const evalTotal = (s1: Side, s2: Side) => {
-      const jc = firstJcHits(s1) ? parlayProfit(s1, s2) : stopAfterFirstProfit();
-      const firstP = firstProfitByOutcome(s1);
-      const secondP = firstJcHits(s1) ? secondProfitByOutcome(s2) : 0;
-      return jc + firstP + secondP;
+      let minTotal = Number.POSITIVE_INFINITY;
+      for (const dg1 of outcomeGoalDiffs[s1]) {
+        const r1 = this.getJingcaiSettlementByGoalDiff(jc1.side, jc1.odds, jc1.market, jc1.handicapLine, dg1);
+        const firstHit = r1.c > this.EPS;
+        
+        const fP = m1Bets.reduce((sum, b) => {
+          const ret = this.getReturnCoefficient(b.type, b.odds, dg1);
+          const settleRatio = this.getSettlementRatio(b.type, dg1);
+          return sum + b.amount * (ret - 1 + settleRatio * rHg);
+        }, 0);
+
+        if (firstHit) {
+          for (const dg2 of outcomeGoalDiffs[s2]) {
+            const r2 = this.getJingcaiSettlementByGoalDiff(jc2.side, jc2.odds, jc2.market, jc2.handicapLine, dg2);
+            const parlayHit = r2.c > this.EPS;
+            const jcProfit = C * ((parlayHit ? jc1.odds * jc2.odds : 0) - 1 + rJc);
+            
+            const sP = m2Bets.reduce((sum, b) => {
+              const ret = this.getReturnCoefficient(b.type, b.odds, dg2);
+              const settleRatio = this.getSettlementRatio(b.type, dg2);
+              return sum + b.amount * (ret - 1 + settleRatio * rHg);
+            }, 0);
+            
+            const total = jcProfit + fP + sP;
+            if (total < minTotal) minTotal = total;
+          }
+        } else {
+          const jcProfit = C * (-1 + rJc);
+          const total = jcProfit + fP;
+          if (total < minTotal) minTotal = total;
+        }
+      }
+      return minTotal;
     };
 
     const comboDetails: Array<{
@@ -1270,11 +1358,13 @@ export class ArbitrageEngine {
       }
     }
 
-    const requiredCombos = comboDetails.filter((x) => x.need_second_hedge);
-    if (requiredCombos.length === 0) return null;
-    const stopCombos = comboDetails.filter((x) => !x.need_second_hedge);
-    const minProfit = [...requiredCombos, ...stopCombos].reduce((min, x) => (x.total < min ? x.total : min), Number.POSITIVE_INFINITY);
-    if (!this.isFinitePositive(minProfit, 0.01)) return null;
+    const minProfit = Math.min(...comboDetails.map((c) => c.total));
+    if (!this.isFinitePositive(minProfit, 0.01)) {
+        if (minProfit < -0.1) {
+            ArbitrageEngine.monitorStrategy({ min_profit: minProfit, min_profit_rate: minProfit / userInvest } as any, `Parlay LP: ${jc1.side}x${jc2.side}`);
+        }
+        return null;
+    }
 
     const userInvest = C + crown_bets.reduce((s, b) => s + b.amount, 0);
     const totalInvest = C / Math.max(1 - sJc, 0.0001) + crown_bets.reduce((s, b) => s + b.amount / Math.max(1 - sHg, 0.0001), 0);
@@ -1308,7 +1398,7 @@ export class ArbitrageEngine {
       rebate: rebateValue,
       rebates: { win: rebateValue, draw: rebateValue, lose: rebateValue },
       min_profit: minProfit,
-      min_profit_rate: minProfit / totalInvest,
+      min_profit_rate: minProfit / userInvest,
       total_invest: totalInvest,
       user_invest: userInvest,
       parlay_outcome_details: {
@@ -1385,9 +1475,9 @@ export class ArbitrageEngine {
     const buildAllSelections = (m: any) => {
       const line = String(m.j_h || m.jc_handicap || m.handicap || '0');
       const arr: Array<{ side: Side; odds: number; market: MarketType; handicapLine?: string; label: string }> = [
-        { side: 'W', odds: Number(m.j_w || 0), market: 'normal', label: '普通胜' },
-        { side: 'D', odds: Number(m.j_d || 0), market: 'normal', label: '普通平' },
-        { side: 'L', odds: Number(m.j_l || 0), market: 'normal', label: '普通负' },
+        { side: 'W', odds: Number(m.j_w || 0), market: 'normal', label: '主胜' },
+        { side: 'D', odds: Number(m.j_d || 0), market: 'normal', label: '平局' },
+        { side: 'L', odds: Number(m.j_l || 0), market: 'normal', label: '客胜' },
       ];
       if (Number(m.j_hw || 0) > 1) arr.push({ side: 'W', odds: Number(m.j_hw), market: 'handicap', handicapLine: line, label: `让胜(${line})` });
       if (Number(m.j_hd || 0) > 1) arr.push({ side: 'D', odds: Number(m.j_hd), market: 'handicap', handicapLine: line, label: `让平(${line})` });
@@ -1428,10 +1518,10 @@ export class ArbitrageEngine {
             (s.jc_market === 'handicap'
               ? `${s.jcSide === 'W' ? '让胜' : s.jcSide === 'D' ? '让平' : '让负'}(${String(m.j_h || m.jc_handicap || m.handicap || '0')})`
               : s.jcSide === 'W'
-              ? '普通胜'
+              ? '主胜'
               : s.jcSide === 'D'
-              ? '普通平'
-              : '普通负'),
+              ? '平局'
+              : '客胜'),
         }))
         .filter((x: any) => this.isFinitePositive(x.odds));
     };
@@ -1439,7 +1529,13 @@ export class ArbitrageEngine {
     const list: any[] = [];
     // Use the full upcoming match pool here. Truncating to the first 20 rows
     // can hide valid parlays that exist later in the schedule.
-    const pool = (matches || []).filter((m) => Number(m.j_w || 0) > 1 || Number(m.j_d || 0) > 1 || Number(m.j_l || 0) > 1);
+    const now = Date.now();
+    const pool = (matches || []).filter((m) => {
+      const startTime = this.getMatchTimeMs(m.match_time);
+      // Skip matches that have already started or are about to start in 5 minutes
+      if (startTime < now + 5 * 60 * 1000) return false;
+      return Number(m.j_w || 0) > 1 || Number(m.j_d || 0) > 1 || Number(m.j_l || 0) > 1;
+    });
     const firstLegByMatch = new Map<string, Array<{ side: Side; odds: number; market: MarketType; handicapLine?: string; label: string }>>();
     for (const m of pool) firstLegByMatch.set(String(m.match_id), buildSingleRecommendedSelections(m));
 

@@ -4,8 +4,14 @@ const LIVE_URL = 'https://live.500.com/';
 const TRADE_URL = 'https://trade.500.com/jczq/';
 const ASIA_ODDS_CACHE_TTL_MS = 10 * 60 * 1000;
 const ASIA_ODDS_CONCURRENCY = 3;
+const PLAYWRIGHT_CONTEXT_IDLE_CLOSE_MS = 8 * 60 * 1000;
 const asiaOddsCache = new Map();
 const asiaOddsInflight = new Map();
+let persistentBrowser = null;
+let persistentContext = null;
+let contextInitPromise = null;
+let contextIdleTimer = null;
+let scrapeQueue = Promise.resolve();
 const HANDICAP_TEXT_MAP = {
   '平手': '0',
   '半球': '0.5',
@@ -55,11 +61,47 @@ function normalizeAsianHandicapText(value) {
   return `${sign}${mapped}`;
 }
 
-async function scrapeFullMatchData(targetDate = null) {
-  let browser = null;
+function scheduleContextClose() {
+  if (contextIdleTimer) clearTimeout(contextIdleTimer);
+  contextIdleTimer = setTimeout(() => {
+    closePersistentContext().catch(() => {});
+  }, PLAYWRIGHT_CONTEXT_IDLE_CLOSE_MS);
+}
 
-  try {
-    browser = await chromium.launch({
+async function closePersistentContext() {
+  if (contextIdleTimer) {
+    clearTimeout(contextIdleTimer);
+    contextIdleTimer = null;
+  }
+  if (persistentContext) {
+    try {
+      await persistentContext.close();
+    } catch {}
+    persistentContext = null;
+  }
+  if (persistentBrowser) {
+    try {
+      await persistentBrowser.close();
+    } catch {}
+    persistentBrowser = null;
+  }
+}
+
+async function getPersistentContext(forceRefresh = false) {
+  if (forceRefresh) {
+    await closePersistentContext();
+  }
+  if (persistentContext && persistentBrowser && persistentBrowser.isConnected()) {
+    scheduleContextClose();
+    return persistentContext;
+  }
+  if (contextInitPromise) {
+    const ctx = await contextInitPromise;
+    scheduleContextClose();
+    return ctx;
+  }
+  contextInitPromise = (async () => {
+    persistentBrowser = await chromium.launch({
       headless: true,
       args: [
         '--no-sandbox',
@@ -68,25 +110,55 @@ async function scrapeFullMatchData(targetDate = null) {
         '--disable-gpu',
       ],
     });
-
-    const context = await browser.newContext({
+    persistentContext = await persistentBrowser.newContext({
       userAgent:
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       viewport: { width: 1280, height: 800 },
     });
+    return persistentContext;
+  })().finally(() => {
+    contextInitPromise = null;
+  });
+  const context = await contextInitPromise;
+  scheduleContextClose();
+  return context;
+}
 
-    const livePhase = await scrapeFromLive500(context, targetDate);
-    if (livePhase.matches.length === 0) {
-      return [];
-    }
+async function runScrapeExclusive(task) {
+  const chained = scrapeQueue.then(task, task);
+  scrapeQueue = chained.catch(() => {});
+  return chained;
+}
 
-    const tradeMatches = await scrapeFromTrade500(context, livePhase.matches);
-    return mergeMatchData(livePhase.matches, tradeMatches);
-  } finally {
-    if (browser) {
-      await browser.close();
+async function scrapeFullMatchData(targetDate = null) {
+  return runScrapeExclusive(async () => {
+    const execute = async (forceRefresh = false) => {
+      const context = await getPersistentContext(forceRefresh);
+      const livePhase = await scrapeFromLive500(context, targetDate);
+      if (livePhase.matches.length === 0) {
+        return [];
+      }
+      const tradeMatches = await scrapeFromTrade500(context, livePhase.matches);
+      return mergeMatchData(livePhase.matches, tradeMatches);
+    };
+
+    try {
+      return await execute(false);
+    } catch (err) {
+      const errText = String(err?.message || err || '').toLowerCase();
+      const shouldRetryFresh =
+        errText.includes('has been closed') ||
+        errText.includes('target page, context or browser has been closed') ||
+        errText.includes('browser closed') ||
+        errText.includes('context closed');
+      if (!shouldRetryFresh) throw err;
+      try {
+        return await execute(true);
+      } catch (retryErr) {
+        throw retryErr;
+      }
     }
-  }
+  });
 }
 
 async function scrapeFromLive500(context, targetDate = null) {
@@ -130,6 +202,217 @@ async function scrapeFromTrade500(context, liveMatches) {
   } finally {
     await page.close();
   }
+}
+
+async function scrape365RichCrownData(targetDate = null) {
+  return runScrapeExclusive(async () => {
+    const context = await getPersistentContext(false);
+    const page = await context.newPage();
+    page.setDefaultTimeout(30000);
+    page.setDefaultNavigationTimeout(60000);
+    try {
+      await page.goto('https://m.365rich.cn/Schedule.htm', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForSelector('#todaySchedule', { timeout: 30000 });
+      await page.waitForTimeout(1800);
+
+      const resolvedDate = await page.evaluate(async (payload) => {
+        const wanted = typeof payload?.targetDate === 'string' ? payload.targetDate.trim() : '';
+        const dateNodes = Array.from(document.querySelectorAll('#ul_Date [id^="li_"]'));
+        const list = dateNodes
+          .map((node) => {
+            const id = String(node?.id || '');
+            const onclick = String(node?.getAttribute('onclick') || '');
+            const byId = id.match(/^li_(\d{4}-\d{2}-\d{2})$/)?.[1] || '';
+            const byClick = onclick.match(/changeDate\('(\d{4}-\d{2}-\d{2})'\)/)?.[1] || '';
+            const date = byId || byClick;
+            return { node, date };
+          })
+          .filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.date));
+        if (list.length === 0) return '';
+
+        const activeNode =
+          list.find((x) => String(x.node.className || '').includes('active') || String(x.node.className || '').includes('current')) ||
+          list.find((x) => x.node.getAttribute('style')?.includes('active')) ||
+          list[0];
+        const picked = list.find((x) => x.date === wanted) || activeNode;
+        const selectedDate = picked?.date || '';
+
+        if (
+          selectedDate &&
+          wanted &&
+          selectedDate === wanted &&
+          typeof window.changeDate === 'function'
+        ) {
+          window.changeDate(wanted);
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+        } else if (selectedDate && wanted && selectedDate !== wanted && typeof window.changeDate === 'function') {
+          window.changeDate(wanted);
+          await new Promise((resolve) => setTimeout(resolve, 1800));
+          return wanted;
+        }
+        return selectedDate;
+      }, { targetDate: targetDate || '' });
+
+      await page.waitForTimeout(1200);
+      const rows = await page.evaluate((payload) => {
+        function toNum(v) {
+          const n = Number.parseFloat(String(v || '').replace(/[^\d.+-]/g, ''));
+          return Number.isFinite(n) ? n : 0;
+        }
+        function parseHandicapLine(text) {
+          const line = String(text || '').trim();
+          if (!line || line === '-' || /赢|输|走/i.test(line)) return '';
+          return line;
+        }
+        function getDateForRow(defaultDate) {
+          const current = document.querySelector('#ul_Date [class*="active"], #ul_Date [class*="current"]');
+          const idDate = String(current?.id || '').match(/^li_(\d{4}-\d{2}-\d{2})$/)?.[1] || '';
+          if (idDate) return idDate;
+          return defaultDate;
+        }
+        const out = [];
+        const selectedDate = String(payload?.sourceDate || '').trim();
+        const rowDate = getDateForRow(selectedDate);
+        const items = Array.from(document.querySelectorAll('#todaySchedule > li'));
+        for (const node of items) {
+          const onclick = String(node.getAttribute('onclick') || '');
+          const idText = onclick.match(/toFenXi\((\d+)\)/)?.[1] || '';
+          if (!/^\d+$/.test(idText)) continue;
+          const matchId = Number.parseInt(idText, 10);
+          if (!Number.isFinite(matchId) || matchId <= 0) continue;
+          const mt = node.querySelector('.game .time')?.textContent?.trim() || '';
+          const gameText = node.querySelector('.game')?.textContent?.replace(/\s+/g, ' ').trim() || '';
+          const league = gameText.replace(mt, '').trim();
+          const home = node.querySelector(`#hname_${matchId}`)?.textContent?.trim() || '';
+          const away = node.querySelector(`#gname_${matchId}`)?.textContent?.trim() || '';
+          const oddsSpans = Array.from(node.querySelectorAll('.odds span')).map((x) => (x.textContent || '').trim());
+          const hLine = parseHandicapLine(oddsSpans[0] || '');
+          const hOdds = toNum(node.querySelector(`#hOdds_${matchId}`)?.textContent);
+          const aOdds = toNum(node.querySelector(`#aOdds_${matchId}`)?.textContent);
+          const oOdds = toNum(node.querySelector(`#oOdds_${matchId}`)?.textContent);
+          const ouLine = String(node.querySelector(`#ogoal_${matchId}`)?.textContent || '').trim();
+          const uOdds = toNum(node.querySelector(`#uOdds_${matchId}`)?.textContent);
+          out.push({
+            sourceMatchId: String(matchId),
+            sourceDate: rowDate || selectedDate || '',
+            matchTime: mt,
+            league,
+            homeTeam: home,
+            awayTeam: away,
+            handicap: { line: hLine, homeOdds: hOdds, awayOdds: aOdds },
+            overUnder: { line: ouLine, overOdds: oOdds, underOdds: uOdds },
+          });
+        }
+        return out;
+      }, { sourceDate: resolvedDate || String(targetDate || '') });
+      return Array.isArray(rows) ? rows : [];
+    } finally {
+      await page.close();
+    }
+  });
+}
+
+function parse365DetailOddsRows(rawRows) {
+  const output = [];
+  for (const row of Array.isArray(rawRows) ? rawRows : []) {
+    const line = String(row?.line || '').trim();
+    const homeOdds = Number(row?.homeOdds || 0);
+    const awayOdds = Number(row?.awayOdds || 0);
+    if (!line || line === '-') continue;
+    if (!Number.isFinite(homeOdds) || !Number.isFinite(awayOdds)) continue;
+    if (homeOdds <= 0 || awayOdds <= 0) continue;
+    output.push({ line, homeOdds, awayOdds });
+  }
+  return output;
+}
+
+async function scrape365RichCrownDetails(matchIds = []) {
+  return runScrapeExclusive(async () => {
+    const ids = Array.from(
+      new Set(
+        (Array.isArray(matchIds) ? matchIds : [])
+          .map((id) => String(id || '').trim())
+          .filter((id) => /^\d+$/.test(id))
+      )
+    );
+    if (ids.length === 0) return {};
+
+    const context = await getPersistentContext(false);
+    const page = await context.newPage();
+    page.setDefaultTimeout(30000);
+    page.setDefaultNavigationTimeout(60000);
+
+    async function parsePageRows(url, oddsType) {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(1800);
+      const rows = await page.evaluate((payload) => {
+        const targetType = Number(payload?.oddsType || 0);
+        function toNum(v) {
+          const n = Number.parseFloat(String(v || '').replace(/[^\d.+-]/g, ''));
+          return Number.isFinite(n) ? n : 0;
+        }
+        function parseCompanyId(onclickText) {
+          const text = String(onclickText || '');
+          let m = text.match(/ShowMainOddsDetail\(\s*\d+\s*,\s*(\d+)\s*,/i);
+          if (m) return Number.parseInt(m[1], 10);
+          m = text.match(/ShowOddsDetail\(\s*\d+\s*,\s*\d+\s*,\s*this\s*,\s*\d+\s*,\s*(\d+)\s*\)/i);
+          if (m) return Number.parseInt(m[1], 10);
+          return NaN;
+        }
+        function parseOddsType(onclickText) {
+          const text = String(onclickText || '');
+          const m = text.match(/Show(?:Main)?OddsDetail\(\s*(\d+)\s*,/i);
+          if (!m) return NaN;
+          return Number.parseInt(m[1], 10);
+        }
+        const blocks = Array.from(document.querySelectorAll('#oddsData > div'));
+        const out = [];
+        for (const block of blocks) {
+          const cid = Number.parseInt(String(block.getAttribute('data-cid') || ''), 10);
+          const onclick = String(block.getAttribute('onclick') || '');
+          const companyId = Number.isFinite(cid) ? cid : parseCompanyId(onclick);
+          if (companyId !== 3) continue;
+          const type = parseOddsType(onclick);
+          if (!Number.isFinite(type) || type !== targetType) continue;
+          const groups = Array.from(block.querySelectorAll('.oddsdata')).map((box) =>
+            Array.from(box.querySelectorAll('span')).map((span) => (span.textContent || '').trim())
+          );
+          if (groups.length === 0) continue;
+          const current = groups[1] || groups[0] || [];
+          const initial = groups[0] || [];
+          const line = String(current[1] || initial[1] || '').trim();
+          const homeOdds = toNum(current[0] || initial[0] || '');
+          const awayOdds = toNum(current[2] || initial[2] || '');
+          out.push({ line, homeOdds, awayOdds });
+        }
+        return out;
+      }, { oddsType });
+      return parse365DetailOddsRows(rows);
+    }
+
+    try {
+      const detailMap = {};
+      for (const matchId of ids) {
+        const asianRows = await parsePageRows(`https://m.365rich.cn/asian/${matchId}.htm`, 0).catch(() => []);
+        const ouRows = await parsePageRows(`https://m.365rich.cn/overunder/${matchId}.htm`, 1).catch(() => []);
+        detailMap[matchId] = {
+          handicaps: asianRows.map((row) => ({
+            type: String(row.line || '').trim(),
+            home_odds: Number(row.homeOdds || 0),
+            away_odds: Number(row.awayOdds || 0),
+          })),
+          overUnderOdds: ouRows.map((row) => ({
+            line: String(row.line || '').trim(),
+            over_odds: Number(row.homeOdds || 0),
+            under_odds: Number(row.awayOdds || 0),
+          })),
+        };
+      }
+      return detailMap;
+    } finally {
+      await page.close();
+    }
+  });
 }
 
 async function waitForTradePage(page) {
@@ -647,6 +930,31 @@ async function mapWithConcurrency(items, concurrency, worker) {
   await Promise.all(workers);
 }
 
+async function fetchRawTextViaBrowser(url) {
+  return runScrapeExclusive(async () => {
+    const context = await getPersistentContext(false);
+    const page = await context.newPage();
+    page.setDefaultTimeout(30000);
+    page.setDefaultNavigationTimeout(60000);
+    try {
+      const resp = await page.goto(String(url || ''), { waitUntil: 'domcontentloaded', timeout: 60000 });
+      const status = resp ? resp.status() : 0;
+      if (status >= 400) {
+        throw new Error(`browser request failed: ${status}`);
+      }
+      const text = await page.evaluate(() => {
+        const pre = document.querySelector('pre');
+        if (pre && pre.textContent) return pre.textContent;
+        const body = document.body;
+        return body ? body.innerText || body.textContent || '' : '';
+      });
+      return String(text || '').trim();
+    } finally {
+      await page.close();
+    }
+  });
+}
+
 function isNotStartedStatus(status) {
   const text = (status || '').replace(/\s+/g, '').trim();
   if (!text) return false;
@@ -663,4 +971,7 @@ function isNotStartedStatus(status) {
 
 module.exports = {
   scrapeFullMatchData,
+  scrape365RichCrownData,
+  scrape365RichCrownDetails,
+  fetchRawTextViaBrowser,
 };

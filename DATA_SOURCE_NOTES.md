@@ -1,73 +1,84 @@
-# 数据源抓取说明（Sporttery + 500 + HGA）
-> 更新时间：2026-04-23  
+# 数据抓取链路说明（Sporttery + 500 + HGA + 365rich 备选）
+
+> 更新时间：2026-05-01
 > 适用项目：`D:\afk`
 
 ## 1. 总体原则
-- 主客队名以 Sporttery 为唯一主权来源（落库不被补丁源覆盖）。
-- 同步遵循“变更才覆盖”：数据无变化返回 `unchanged`。
-- HGA/500 任一链路失败不应阻断主链路，按兜底规则继续。
-- 失效数据不保留历史残留：本轮抓不到即写空，前端显示 `-`。
+- 主客队名以 Sporttery 为准，补丁源只补赔率，不覆盖入库队名。
+- 同步遵循“变更才覆盖”；无变化返回 `unchanged`。
+- 任一补丁源失败都不阻断主链路。
+- 皇冠字段当轮无效时保持为空，前端显示 `-`，避免误导套利算法。
 
-## 2. 第一层主源（Sporttery）
-### 2.1 来源
-- 胜平负（had）：`https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry?channel=c&poolCode=had`
-- 让球胜平负（hhad）：`https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry?channel=c&poolCode=hhad`
-- 总进球（ttg）：`https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry?channel=c&poolCode=ttg`
+## 2. HGA 关闭时的抓取顺序
+1. **Sporttery 主源**
+- 来源：
+  - `https://webapi.sporttery.cn/...poolCode=had`
+  - `https://webapi.sporttery.cn/...poolCode=hhad`
+  - `https://webapi.sporttery.cn/...poolCode=ttg`
+- 产出：
+  - 基础信息：赛事、比赛时间、主队、客队、让球
+  - 竞彩赔率：胜平负、让球胜平负
+  - 总进球：`0球 ~ 7+球`
 
-### 2.2 字段映射
-- `had.h/d/a` -> `j_w/j_d/j_l`
-- `hhad.h/d/a` -> `j_hw/j_hd/j_hl`
-- `hhad.goalLineValue`（兜底 `goalLine`）-> `jingcai_handicap`
-- `ttg.s0..s7` -> `c_goal`（`0球` 到 `7+球`）
+2. **live.500 皇冠胜平负**
+- 来源：
+  - `https://live.500.com/zqdc.php`
+  - `https://live.500.com/`（当 zqdc 存在缺口时才触发）
+- 产出：`c_w/c_d/c_l`
 
-### 2.3 匹配规则
-1. 严格：`match_id = {matchDate}|{matchNum}`
-2. 兜底：同比赛日 + 归一化主客队 + 分钟级开赛时间
+3. **trade.500 皇冠让球兜底**
+- 来源：`https://trade.500.com/jczq/`
+- 产出：`c_h`（仅作为基础层兜底）
 
-## 3. 第二层补强（500）
-### 3.1 皇冠胜平负
-- 主补强来源：`live.500.com`（按 `fid` 抓公司 280 欧赔）
-- 匹配键优先级：
-1. `match_id` 精确匹配
-2. `round` 匹配
-3. `日期 + HH:mm + 归一化主客队`（使用球队别名映射）
+4. **trade.500 总进球兜底**
+- 来源：`https://trade.500.com/jczq/?playid=270&g=2&date=YYYY-MM-DD`
+- 触发条件：Sporttery TTG 请求失败、返回空映射或总进球命中率不足。
+- 产出：`c_goal`（`0球..7+球`）。
+- 约束：只补缺失场次，不覆盖已有有效 Sporttery TTG；`playid=269` 主要用于胜平负/让球胜平负，不作为总进球核心源。
 
-- 次补强来源（仅补空）：`trade.500 odds.xml`
-  - `https://www.500.com/static/public/jczq/xml/odds/odds.xml`
-  - `https://trade.500.com/static/public/jczq/xml/odds/odds.xml`
-  - `https://ews.500.com/static/public/jczq/xml/odds/odds.xml`
+5. **odds.500 皇冠盘口增强（优先于 trade.500）**
+- 来源：
+  - `https://odds.500.com/yazhi_jczq.shtml`
+  - `https://odds.500.com/daxiao_jczq.shtml`
+- 产出：
+  - `yazhi_jczq` -> 皇冠让球即时盘口（主/客水位 + 盘口线）-> `c_h`
+  - `daxiao_jczq` -> 皇冠大小球即时盘口（大/小水位 + 盘口线）-> `c_ou`
+- 优先级：odds.500 命中时优先覆盖对应盘口；trade.500 仅补空。
 
-### 3.2 皇冠让球
-- HGA 失败/超时/锁定时，使用 `https://trade.500.com/jczq/` 兜底补让球（`c_h`）。
+6. **365rich 备选（仅补空 OU）**
+- 来源：
+  - 列表：`https://m.365rich.cn/Schedule.htm`
+  - 详情：`/overunder/{id}.htm`
+- 触发条件：仅当该场 `c_ou` 为空时触发。
+- 约束：只补 `c_ou`，不改 `c_h`，不改队名。
 
-## 4. HGA 链路
-### 4.1 开启时
-- 抓皇冠胜平负、让球、全场大小球（OU）。
-- OU 仅采集全场标签：
-  - 盘口：`RATIO_OUO / RATIO_OUU`
-  - 赔率：`IOR_OUC`（大）/ `IOR_OUH`（小）
+## 3. HGA 开启时的抓取顺序
+先完整执行“第 2 节基础链路”，再执行 HGA：
 
-### 4.2 异常时
-- 账号锁定/密码错误会进入保护逻辑，避免高频重试。
-- HGA 失败轮次不保留旧 OU 残留：`c_ou` 清空，前端显示 `-`。
+7. **HGA 覆盖增强**
+- HGA 匹配成功场次：
+  - `c_h` 以 HGA 覆盖
+  - `c_ou` 以 HGA 覆盖
+- HGA 未命中/失败场次：
+  - 保留前面 500 + odds.500 + 365rich 结果
+  - 不清空整场数据
+- HGA 锁定/密码错误/超时：
+  - 仍按现有降级策略继续返回基础链路结果
 
-## 5. 映射规则（球队别名）
-- 映射完全用户可控：只读取用户配置，不自动混入默认映射。
-- 映射用于跨源匹配（含 HGA、live.500 的队名归一化匹配）。
-- 建议使用“同义名 -> 统一名”方式维护，避免一队多写法。
+## 4. 匹配与入库口径
+- 统一优先键：`match_id = date|round`
+- 兜底键：比赛时间 + 归一化主客队名
+- 盘口字段：
+  - `c_h`：数组结构 `[{ type, home_odds, away_odds }]`
+  - `c_goal`：数组结构 `[{ label, odds }]`，标签固定为 `0球..7+球`
+  - `c_ou`：数组结构 `[{ line, over_odds, under_odds }]`
+  - 无有效值写空数组，前端显示 `-`
 
-## 6. 写库口径（关键）
-- `c_w/c_d/c_l`：本轮有效则写值，否则写 `0`（前端显示 `-`）。
-- `c_h`：本轮抓到则写数组，否则写空数组。
-- `c_ou`：本轮抓到则写数组，否则写空数组。
-- 不再用历史旧值回填失效皇冠字段，避免套利误判。
+## 5. 关键日志口径
+- `odds500 yazhi matched x/y`
+- `odds500 daxiao matched x/y`
+- `trade.500 JQS goal odds fallback matched x/y`
+- `rich365 ou fallback matched x/y`
+- `hga override ch/cou matched x/y`
 
-## 7. 前端展示口径
-- 数值 `<= 0` 或空数组均显示 `-`。
-- 比赛列表显示“最新一批抓取数据”，不再死卡“今天写入”。
-
-## 8. 排查顺序（建议）
-1. 看 `scrape_health_logs`：本轮状态、`hga_status`、`note`。
-2. 看抓取日志：各链路命中数（sporttery/live500/odds.xml/hga）。
-3. 查库字段：`c_w/c_d/c_l`、`c_h`、`c_ou`、`c_goal`。
-4. 最后核对 `/api/matches` 返回与页面渲染。
+`scrape_health_logs.note` 会附带来源摘要，便于后台快速判断本轮哪层生效。

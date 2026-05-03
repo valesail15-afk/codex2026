@@ -6,3 +6,31 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Deployment & Tools
+deploy.sh
+deploy.tar.gz
+deploy/*.tar.gz
+deploy/*.db
+tools/deploy_vps.py
+tools/reset_admin_password.ts
+tools/check_vps_logs.py
+tools/trigger_rescan.ts
+tools/trigger_sync.ts
+tools/migrate_handicap_signs.ts
+tools/fix_all_handicap_signs.ts
+tools/fix_strasbourg_data.ts
+tools/deep_debug_match.ts
+tools/debug_match_data.ts
+
+# Temporary files
+tmp_*
+*.html
+*.js
+qa-artifacts/
+.playwright-mcp/

@@ -7,6 +7,7 @@ import { invertHandicap, normalizeCrownTarget, parseHandicap } from '../shared/o
 import { parseCrownBetTypeCompat } from '../shared/crownBetTypeCompat';
 import { matrixTableStyle, matrixWrapStyle, MATRIX_UI } from '../shared/matrixUi';
 import { OUTCOME_CN, TERMS, currency, signedCurrency } from '../shared/terminology';
+import BetStakeCalculatorModal from './BetStakeCalculatorModal';
 
 const { Title, Text } = Typography;
 
@@ -35,11 +36,11 @@ const formatPercent = (value: number) => `${(Number(value || 0) * 100).toFixed(1
 const formatJcSideLabel = (side: Side, market: Market, line: string) => {
   if (market === 'normal') {
     if (side === 'W') return '主胜';
-    if (side === 'D') return '平';
+    if (side === 'D') return '平局';
     return '客胜';
   }
   if (side === 'W') return `主胜(${line})`;
-  if (side === 'D') return `平(${line})`;
+  if (side === 'D') return `平局(${line})`;
   return `客胜(${invertHandicap(line)})`;
 };
 
@@ -483,7 +484,7 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
 
     return [
       ...buildRow('win', '主胜', 'blue'),
-      ...buildRow('draw', '平', 'gold'),
+      ...buildRow('draw', '平局', 'gold'),
       ...buildRow('lose', '客胜', 'red'),
     ];
   }, [currentPickedOption, matchInfo, selected, settingsMeta.crownRebate, settingsMeta.jcRebate]);
@@ -583,51 +584,76 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
 
     const line = String(matchInfo.jc_handicap || matchInfo.j_h || '0').trim() || '0';
     const picked = currentPickedOption;
-    const outcomeMap: Record<Side, any> = {
-      W: outcomeRows.find((row) => row.key === 'win'),
-      D: outcomeRows.find((row) => row.key === 'draw'),
-      L: outcomeRows.find((row) => row.key === 'lose'),
+    const pickSideOutcome = (prefix: 'win' | 'draw' | 'lose') => {
+      const rows = outcomeRows.filter((row) => String(row?.key || '').startsWith(prefix));
+      if (rows.length === 0) return null;
+      return { total: Math.min(...rows.map((row) => Number(row?.total || 0))) };
+    };
+    const outcomeMap: Record<Side, { total: number } | null> = {
+      W: pickSideOutcome('win'),
+      D: pickSideOutcome('draw'),
+      L: pickSideOutcome('lose'),
     };
 
     const standard = {
       jc: {
         W: createCell(`主胜 @ ${Number(matchInfo.j_w || 0).toFixed(2)}`),
-        D: createCell(`平 @ ${Number(matchInfo.j_d || 0).toFixed(2)}`),
+        D: createCell(`平局 @ ${Number(matchInfo.j_d || 0).toFixed(2)}`),
         L: createCell(`客胜 @ ${Number(matchInfo.j_l || 0).toFixed(2)}`),
       } as Record<Side, SummaryCell>,
       crown: {
         W: createCell(`主胜 @ ${Number(matchInfo.c_w || 0).toFixed(2)}`),
-        D: createCell(`平 @ ${Number(matchInfo.c_d || 0).toFixed(2)}`),
+        D: createCell(`平局 @ ${Number(matchInfo.c_d || 0).toFixed(2)}`),
         L: createCell(`客胜 @ ${Number(matchInfo.c_l || 0).toFixed(2)}`),
       } as Record<Side, SummaryCell>,
     };
 
     const crownHandicapRows = parseCrownHandicapRows(matchInfo.c_h);
-    const preferredHandicapBet = (selected.crown_bets || []).find((bet) => /\([^)]+\)/.test(normalizeCrownTarget(String(bet.type || ''))));
+    const crownAhBets = (selected.crown_bets || [])
+      .map((bet) => {
+        const normalized = normalizeCrownTarget(String(bet.type || ''));
+        const parsed = parseCrownBetTypeCompat(normalized);
+        if (parsed.kind !== 'ah') return null;
+        const side: Side = parsed.side === 'home' ? 'W' : parsed.side === 'draw' ? 'D' : 'L';
+        return {
+          side,
+          target: normalized,
+          odds: Number(bet.odds || 0),
+        };
+      })
+      .filter(Boolean) as Array<{ side: Side; target: string; odds: number }>;
+    const preferredHandicapBet = crownAhBets[0] || null;
     const preferredLine = preferredHandicapBet
-      ? normalizeCrownTarget(String(preferredHandicapBet.type || '')).match(/\(([^)]+)\)/)?.[1] || ''
+      ? String(preferredHandicapBet.target || '').match(/\(([^)]+)\)/)?.[1] || ''
       : '';
     const preferredCrownHandicap =
       crownHandicapRows.find((row) => String(row?.type || row?.handicap || '').trim() === preferredLine) || crownHandicapRows[0] || null;
     const crownHandicapLine = String(preferredCrownHandicap?.type || preferredCrownHandicap?.handicap || '').trim();
+    const getSelectedAhOddsLabel = (side: Side) => {
+      const bets = crownAhBets.filter((item) => item.side === side && item.target);
+      if (bets.length === 0) return '';
+      return bets.map((item) => `${item.target} @ ${Number(item.odds || 0).toFixed(2)}`).join(' | ');
+    };
 
     const handicap = {
       jc: {
         W: createCell(`主胜(${line}) @ ${Number(matchInfo.j_hw || 0).toFixed(2)}`),
-        D: createCell(`平(${line}) @ ${Number(matchInfo.j_hd || 0).toFixed(2)}`),
+        D: createCell(`平局(${line}) @ ${Number(matchInfo.j_hd || 0).toFixed(2)}`),
         L: createCell(`客胜(${invertHandicap(line)}) @ ${Number(matchInfo.j_hl || 0).toFixed(2)}`),
       } as Record<Side, SummaryCell>,
       crown: {
         W: createCell(
-          crownHandicapLine
-            ? `主胜(${crownHandicapLine}) @ ${Number(preferredCrownHandicap?.home_odds ?? preferredCrownHandicap?.homeOdds ?? preferredCrownHandicap?.homeWater ?? 0).toFixed(2)}`
-            : ''
+          getSelectedAhOddsLabel('W') ||
+            (crownHandicapLine
+              ? `主胜(${crownHandicapLine}) @ ${Number(preferredCrownHandicap?.home_odds ?? preferredCrownHandicap?.homeOdds ?? preferredCrownHandicap?.homeWater ?? 0).toFixed(2)}`
+              : '')
         ),
         D: createCell('-'),
         L: createCell(
-          crownHandicapLine
-            ? `客胜(${invertHandicap(crownHandicapLine)}) @ ${Number(preferredCrownHandicap?.away_odds ?? preferredCrownHandicap?.awayOdds ?? preferredCrownHandicap?.awayWater ?? 0).toFixed(2)}`
-            : ''
+          getSelectedAhOddsLabel('L') ||
+            (crownHandicapLine
+              ? `客胜(${invertHandicap(crownHandicapLine)}) @ ${Number(preferredCrownHandicap?.away_odds ?? preferredCrownHandicap?.awayOdds ?? preferredCrownHandicap?.awayWater ?? 0).toFixed(2)}`
+              : '')
         ),
       } as Record<Side, SummaryCell>,
     };
@@ -696,6 +722,7 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
             title="下注方案详情"
             extra={
               <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'nowrap' }}>
+                <BetStakeCalculatorModal strategy={selected} shares={{ jingcai: settingsMeta.jcShare, crown: settingsMeta.crownShare }} />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 210 }}>
                   <div style={{ fontSize: 13, color: '#595959', whiteSpace: 'nowrap' }}>整单控制</div>
                   <Form.Item name="base_type" style={{ marginBottom: 0, flex: 1 }}>

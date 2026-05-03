@@ -6,14 +6,19 @@ import { randomUUID } from 'crypto';
 import cookieParser from 'cookie-parser';
 import bcrypt from 'bcryptjs';
 import { WebSocketServer } from 'ws';
-import db, { formatLocalDbDateTime, initDb } from './src/server/db';
+import db, { dbPath, dbPathSource, formatLocalDbDateTime, initDb } from './src/server/db';
 import { CrawlerService } from './src/server/crawler';
 import { ArbitrageEngine } from './src/server/arbitrageEngine';
 import { authenticateToken, authorizeAdmin, generateToken, logAction, AuthRequest, revokeAllUserSessions, revokeSession, validateAuthToken } from './src/server/auth';
-import { invertHandicap, normalizeCrownTarget, parseParlayRawSide, sideToLabel } from './src/shared/oddsText';
+import { invertHandicap, normalizeCrownTarget, parseParlayRawSide } from './src/shared/oddsText';
 
 const DEFAULT_SYNC_INTERVAL_SECONDS = 90;
 const MIN_SYNC_INTERVAL_SECONDS = 60;
+const SCHEDULER_HEARTBEAT_SECONDS = 15;
+const DEFAULT_SCHEDULE_MODE = 'hybrid';
+const DEFAULT_FALLBACK_POLLING_SECONDS = 300;
+const MIN_FALLBACK_POLLING_SECONDS = 300;
+const MAX_FALLBACK_POLLING_SECONDS = 600;
 const LAST_SYNC_SETTING_KEY = 'last_sync_at';
 const ARBITRAGE_SETTING_KEYS = [
   'default_jingcai_rebate',
@@ -32,9 +37,18 @@ const ADMIN_ONLY_SETTINGS_KEYS = new Set([
   'hga_team_alias_table_rows',
   'hga_runtime_status',
   'hga_runtime_message',
+  'hga_tune_login_timeout_ms',
+  'hga_tune_list_timeout_ms',
+  'hga_tune_market_item_timeout_ms',
+  'hga_tune_obt_batch_size',
+  'hga_tune_obt_batch_retry',
+  'hga_tune_obt_concurrency',
+  'hga_tune_last_optimize_result',
 ]);
 let nextAutoScanAtMs = 0;
 let currentAutoScanIntervalSeconds = DEFAULT_SYNC_INTERVAL_SECONDS;
+
+type ScheduleMode = 'manual_only' | 'polling_only' | 'hybrid';
 
 type SyncPushEvent = {
   id: number;
@@ -140,6 +154,28 @@ function getEffectiveSyncIntervalSeconds() {
   return Math.max(MIN_SYNC_INTERVAL_SECONDS, parsed);
 }
 
+function getSyncScheduleMode(): ScheduleMode {
+  const adminId = getAdminUserId();
+  if (!adminId) return DEFAULT_SCHEDULE_MODE as ScheduleMode;
+  const row = db
+    .prepare("SELECT value FROM system_settings WHERE user_id = ? AND key = 'sync_schedule_mode'")
+    .get(adminId) as { value?: string } | undefined;
+  const value = String(row?.value || DEFAULT_SCHEDULE_MODE).trim();
+  if (value === 'manual_only' || value === 'polling_only' || value === 'hybrid') return value;
+  return DEFAULT_SCHEDULE_MODE as ScheduleMode;
+}
+
+function getFallbackPollingSeconds() {
+  const adminId = getAdminUserId();
+  if (!adminId) return DEFAULT_FALLBACK_POLLING_SECONDS;
+  const row = db
+    .prepare("SELECT value FROM system_settings WHERE user_id = ? AND key = 'fallback_polling_seconds'")
+    .get(adminId) as { value?: string } | undefined;
+  const parsed = Number.parseInt(String(row?.value || DEFAULT_FALLBACK_POLLING_SECONDS), 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_FALLBACK_POLLING_SECONDS;
+  return Math.max(MIN_FALLBACK_POLLING_SECONDS, Math.min(MAX_FALLBACK_POLLING_SECONDS, parsed));
+}
+
 function getLastSyncTimeMs() {
   const adminId = getAdminUserId();
   if (!adminId) return 0;
@@ -160,6 +196,8 @@ function setLastSyncTimeMs(ts: number) {
 function getSyncRefreshStatus() {
   const adminId = getAdminUserId();
   const intervalSeconds = getEffectiveSyncIntervalSeconds();
+  const scheduleMode = getSyncScheduleMode();
+  const fallbackPollingSeconds = getFallbackPollingSeconds();
   const lastSyncAtMs = getLastSyncTimeMs();
   const hgaEnabled = isAdminHgaEnabled();
   const latestCrownFetch = db
@@ -194,6 +232,8 @@ function getSyncRefreshStatus() {
     currentAutoScanIntervalSeconds = intervalSeconds;
     return {
       auto_scan_enabled: false,
+      schedule_mode: scheduleMode,
+      fallback_polling_seconds: fallbackPollingSeconds,
       hga_enabled: hgaEnabled,
       interval_seconds: intervalSeconds,
       last_sync_at: lastSyncAtMs > 0 ? new Date(lastSyncAtMs).toISOString() : null,
@@ -215,6 +255,8 @@ function getSyncRefreshStatus() {
 
   return {
     auto_scan_enabled: true,
+    schedule_mode: scheduleMode,
+    fallback_polling_seconds: fallbackPollingSeconds,
     hga_enabled: hgaEnabled,
     interval_seconds: currentAutoScanIntervalSeconds,
     last_sync_at: lastSyncAtMs > 0 ? new Date(lastSyncAtMs).toISOString() : null,
@@ -248,6 +290,63 @@ function getRecentHgaAvgFetchSeconds(sampleSize = 30) {
   const avgMs = Number(row?.avg_duration_ms || 0);
   if (!Number.isFinite(avgMs) || avgMs <= 0) return 0;
   return Math.round((avgMs / 1000) * 10) / 10;
+}
+
+function getPublicDbHealth() {
+  const stat = fs.existsSync(dbPath) ? fs.statSync(dbPath) : null;
+  const countTable = (table: string, where = '') => {
+    try {
+      const row = db.prepare(`SELECT COUNT(*) AS count FROM ${table}${where ? ` WHERE ${where}` : ''}`).get() as
+        | { count?: number }
+        | undefined;
+      return Number(row?.count || 0);
+    } catch {
+      return null;
+    }
+  };
+  const latestScrape = db
+    .prepare(
+      `SELECT status, fetched_total, filtered_total, synced_total, complete_total, hga_status,
+              hga_count, base_count, merged_count, playwright_fallback_used, note, duration_ms, created_at
+       FROM scrape_health_logs
+       ORDER BY id DESC
+       LIMIT 1`
+    )
+    .get() as any;
+
+  return {
+    pathSource: dbPathSource,
+    fileName: path.basename(dbPath),
+    exists: Boolean(stat),
+    mtime: stat ? stat.mtime.toISOString() : null,
+    sizeBytes: stat ? stat.size : 0,
+    counts: {
+      matches: countTable('matches'),
+      non_manual_matches: countTable('matches', "match_id NOT LIKE 'manual_%'"),
+      manual_matches: countTable('matches', "match_id LIKE 'manual_%'"),
+      jingcai_odds: countTable('jingcai_odds'),
+      crown_odds: countTable('crown_odds'),
+      arbitrage_opportunities: countTable('arbitrage_opportunities'),
+      parlay_opportunities: countTable('parlay_opportunities'),
+    },
+    latest_scrape: latestScrape
+      ? {
+          status: latestScrape.status,
+          fetched_total: Number(latestScrape.fetched_total || 0),
+          filtered_total: Number(latestScrape.filtered_total || 0),
+          synced_total: Number(latestScrape.synced_total || 0),
+          complete_total: Number(latestScrape.complete_total || 0),
+          hga_status: latestScrape.hga_status,
+          hga_count: Number(latestScrape.hga_count || 0),
+          base_count: Number(latestScrape.base_count || 0),
+          merged_count: Number(latestScrape.merged_count || 0),
+          playwright_fallback_used: Number(latestScrape.playwright_fallback_used || 0) === 1,
+          note: latestScrape.note || '',
+          duration_ms: Number(latestScrape.duration_ms || 0),
+          created_at: latestScrape.created_at || null,
+        }
+      : null,
+  };
 }
 
 function normalizeCrownHandicaps(raw: any) {
@@ -332,17 +431,23 @@ function toDisplayOdds(value: any) {
   return Number.isFinite(n) && n > 0 ? Number(n) : 0;
 }
 
+function sideToLabel(side: 'W' | 'D' | 'L') {
+  if (side === 'W') return '主胜';
+  if (side === 'D') return '平局';
+  return '客胜';
+}
+
 function handicapSideLabel(side: 'W' | 'D' | 'L', handicapLine: string) {
-  if (side === 'W') return `\u4e3b\u80dc(${handicapLine})`;
-  if (side === 'D') return `\u5e73(${handicapLine})`;
-  return `\u5ba2\u80dc(${invertHandicap(handicapLine)})`;
+  if (side === 'W') return `主胜(${handicapLine})`;
+  if (side === 'D') return `平局(${handicapLine})`;
+  return `客胜(${invertHandicap(handicapLine)})`;
 }
 
 function parseNormalizedCrownLabel(label: string) {
-  const matched = String(label || '').trim().match(/^(\u4e3b\u80dc|\u5e73|\u5ba2\u80dc)(?:\(([^)]+)\))?$/);
+  const matched = String(label || '').trim().match(/^(主胜|平局|客胜)(?:\(([^)]+)\))?$/);
   if (!matched) return null;
   return {
-    sideKey: matched[1] === '\u4e3b\u80dc' ? 'W' : matched[1] === '\u5e73' ? 'D' : 'L',
+    sideKey: matched[1] === '主胜' ? 'W' : matched[1] === '平局' ? 'D' : 'L',
     handicapLine: matched[2] || '',
   } as const;
 }
@@ -871,6 +976,8 @@ async function startServer() {
         ['auto_scan', 'false'],
         ['sound_alert', 'false'],
         ['scan_interval', String(DEFAULT_SYNC_INTERVAL_SECONDS)],
+        ['sync_schedule_mode', DEFAULT_SCHEDULE_MODE],
+        ['fallback_polling_seconds', String(DEFAULT_FALLBACK_POLLING_SECONDS)],
         [LAST_SYNC_SETTING_KEY, '0'],
         ['login_lock_short_minutes', '10'],
         ['login_lock_long_minutes', '120'],
@@ -1079,7 +1186,11 @@ async function startServer() {
 
   // API health check (public)
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', time: new Date().toISOString() });
+    try {
+      res.json({ status: 'ok', time: new Date().toISOString(), db: getPublicDbHealth() });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', time: new Date().toISOString(), error: err?.message || 'health failed' });
+    }
   });
 
   app.get('/api/matches', authenticateToken, (req: AuthRequest, res) => {
@@ -1197,9 +1308,21 @@ async function startServer() {
     }
   });
 
-  app.get('/api/matches/refresh-status', authenticateToken, (_req: AuthRequest, res) => {
-    res.json(getSyncRefreshStatus());
-  });
+app.get('/api/matches/refresh-status', authenticateToken, (_req: AuthRequest, res) => {
+  res.json(getSyncRefreshStatus());
+});
+
+app.get('/api/matches/unified-snapshot', authenticateToken, authorizeAdmin, async (_req: AuthRequest, res) => {
+  try {
+    const includeRawParam = String((_req.query?.include_raw as string) || '0').trim().toLowerCase();
+    const includeRaw = includeRawParam === '1' || includeRawParam === 'true';
+    const snapshot = await CrawlerService.buildUnifiedSnapshot({ includeRaw, suppressAutoUpsert: true });
+    res.json(snapshot);
+  } catch (err: any) {
+    console.error('Failed to build unified snapshot:', err);
+    res.status(500).json({ error: err?.message || 'failed_to_build_unified_snapshot' });
+  }
+});
 
   app.get('/api/matches/:id', authenticateToken, (req: AuthRequest, res) => {
     const match = db.prepare(`
@@ -1212,6 +1335,7 @@ async function startServer() {
       LEFT JOIN jingcai_odds j ON m.match_id = j.match_id
       LEFT JOIN crown_odds c ON m.match_id = c.match_id
       WHERE m.match_id = ?
+        AND COALESCE(m.status, 'upcoming') != 'stale'
     `).get(req.params.id) as any;
     
     if (!match) return res.status(404).json({ error: 'Match not found' });
@@ -1241,6 +1365,7 @@ async function startServer() {
       LEFT JOIN jingcai_odds j ON o.match_id = j.match_id
       LEFT JOIN crown_odds c ON o.match_id = c.match_id
       WHERE o.base_type = ? AND o.user_id = ?
+        AND COALESCE(m.status, 'upcoming') != 'stale'
       ORDER BY o.profit_rate DESC
     `).all(baseType, req.user!.id);
     const rows = opps
@@ -1287,6 +1412,8 @@ async function startServer() {
       LEFT JOIN crown_odds c1 ON o.match_id_1 = c1.match_id
       LEFT JOIN crown_odds c2 ON o.match_id_2 = c2.match_id
       WHERE o.base_type = ? AND o.user_id = ?
+        AND COALESCE(m1.status, 'upcoming') != 'stale'
+        AND COALESCE(m2.status, 'upcoming') != 'stale'
       ORDER BY o.profit_rate DESC
     `).all(baseType, req.user!.id);
     const rows = opps.map((o: any) => buildParlayDisplayRecord(o));
@@ -1296,37 +1423,52 @@ async function startServer() {
   app.get('/api/arbitrage/parlay-opportunities/:id', authenticateToken, (req: AuthRequest, res) => {
     const baseType = parseParlayBaseType(req.query.base_type);
     if (!baseType) {
+      console.warn(`[API] Invalid base_type for parlay detail: ${req.query.base_type}`);
       return res.status(400).json({ error: 'Invalid base_type, expected jingcai|crown' });
     }
     const { id } = req.params;
-    const row = db.prepare(`
-      SELECT o.*,
-             m1.league as league_1, m1.home_team as home_team_1, m1.away_team as away_team_1, m1.match_time as match_time_1, m1.jingcai_handicap as jc_handicap_1,
-             m2.league as league_2, m2.home_team as home_team_2, m2.away_team as away_team_2, m2.match_time as match_time_2, m2.jingcai_handicap as jc_handicap_2,
-             j1.win_odds as j1_w, j1.draw_odds as j1_d, j1.lose_odds as j1_l,
-             j1.handicap_win_odds as j1_hw, j1.handicap_draw_odds as j1_hd, j1.handicap_lose_odds as j1_hl,
-             j2.win_odds as j2_w, j2.draw_odds as j2_d, j2.lose_odds as j2_l,
-             j2.handicap_win_odds as j2_hw, j2.handicap_draw_odds as j2_hd, j2.handicap_lose_odds as j2_hl,
-             c1.win_odds as c1_w, c1.draw_odds as c1_d, c1.lose_odds as c1_l, c1.handicaps as c1_h,
-             c2.win_odds as c2_w, c2.draw_odds as c2_d, c2.lose_odds as c2_l, c2.handicaps as c2_h
-      FROM parlay_opportunities o
-      JOIN matches m1 ON o.match_id_1 = m1.match_id
-      JOIN matches m2 ON o.match_id_2 = m2.match_id
-      LEFT JOIN jingcai_odds j1 ON o.match_id_1 = j1.match_id
-      LEFT JOIN jingcai_odds j2 ON o.match_id_2 = j2.match_id
-      LEFT JOIN crown_odds c1 ON o.match_id_1 = c1.match_id
-      LEFT JOIN crown_odds c2 ON o.match_id_2 = c2.match_id
-      WHERE o.id = ? AND o.user_id = ? AND o.base_type = ?
-      LIMIT 1
-    `).get(id, req.user!.id, baseType) as any;
+    console.log(`[API] Fetching parlay detail id=${id}, user=${req.user!.id}, baseType=${baseType}`);
+    try {
+      const row = db.prepare(`
+        SELECT o.*,
+               m1.league as league_1, m1.home_team as home_team_1, m1.away_team as away_team_1, m1.match_time as match_time_1, m1.jingcai_handicap as jc_handicap_1, m1.status as m1_status,
+               m2.league as league_2, m2.home_team as home_team_2, m2.away_team as away_team_2, m2.match_time as match_time_2, m2.jingcai_handicap as jc_handicap_2, m2.status as m2_status,
+               j1.win_odds as j1_w, j1.draw_odds as j1_d, j1.lose_odds as j1_l,
+               j1.handicap_win_odds as j1_hw, j1.handicap_draw_odds as j1_hd, j1.handicap_lose_odds as j1_hl,
+               j2.win_odds as j2_w, j2.draw_odds as j2_d, j2.lose_odds as j2_l,
+               j2.handicap_win_odds as j2_hw, j2.handicap_draw_odds as j2_hd, j2.handicap_lose_odds as j2_hl,
+               c1.win_odds as c1_w, c1.draw_odds as c1_d, c1.lose_odds as c1_l, c1.handicaps as c1_h,
+               c2.win_odds as c2_w, c2.draw_odds as c2_d, c2.lose_odds as c2_l, c2.handicaps as c2_h
+        FROM parlay_opportunities o
+        LEFT JOIN matches m1 ON o.match_id_1 = m1.match_id
+        LEFT JOIN matches m2 ON o.match_id_2 = m2.match_id
+        LEFT JOIN jingcai_odds j1 ON o.match_id_1 = j1.match_id
+        LEFT JOIN jingcai_odds j2 ON o.match_id_2 = j2.match_id
+        LEFT JOIN crown_odds c1 ON o.match_id_1 = c1.match_id
+        LEFT JOIN crown_odds c2 ON o.match_id_2 = c2.match_id
+        WHERE o.id = ? AND o.user_id = ? AND o.base_type = ?
+      `).get(id, req.user!.id, baseType) as any;
 
-    if (!row) return res.status(404).json({ error: 'Parlay opportunity not found' });
-    res.json(buildParlayDisplayRecord(row));
+      if (!row) {
+        console.warn(`[API] Parlay opportunity not found or mismatch: id=${id}, user=${req.user!.id}, baseType=${baseType}`);
+        return res.status(404).json({ error: 'Parlay opportunity not found' });
+      }
+      
+      if (row.m1_status === 'stale' || row.m2_status === 'stale') {
+         console.warn(`[API] Parlay matches are stale: id=${id}, m1=${row.m1_status}, m2=${row.m2_status}`);
+         // We still return it but maybe frontend should show a warning
+      }
+
+      res.json(buildParlayDisplayRecord(row));
+    } catch (err: any) {
+      console.error(`[API] Failed to fetch parlay detail: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.post('/api/arbitrage/rescan', authenticateToken, async (req: AuthRequest, res) => {
     try {
-      await CrawlerService.scanOpportunities(req.user!.id);
+      await CrawlerService.scanOpportunities(req.user!.id, { force_recalculate: true });
       res.json({ status: 'ok' });
     } catch (err: any) {
       res.status(500).json({ error: `Re-scan failed: ${err.message}` });
@@ -1373,6 +1515,7 @@ async function startServer() {
       JOIN crown_odds c ON j.match_id = c.match_id
       JOIN matches m ON j.match_id = m.match_id
       WHERE j.match_id = ?
+        AND COALESCE(m.status, 'upcoming') != 'stale'
     `).get(match_id) as any;
 
     if (!m) return res.status(404).json({ error: 'Match not found' });
@@ -1623,6 +1766,13 @@ async function startServer() {
     settingsMap.hga_status_message = hgaStatus.message;
     settingsMap.hga_blocked_until = hgaStatus.blocked_until;
     settingsMap.hga_avg_fetch_seconds = getRecentHgaAvgFetchSeconds();
+    const hgaTuning = CrawlerService.getHgaTuningParams();
+    const hgaLastOptimize = CrawlerService.getHgaLastOptimizeResult();
+    settingsMap.hga_tuning_effective = hgaTuning.effective;
+    settingsMap.hga_tuning_persisted = hgaTuning.persisted;
+    settingsMap.hga_tuning_default = hgaTuning.default;
+    settingsMap.hga_tuning_override_active = hgaTuning.override_active;
+    settingsMap.hga_tune_last_optimize_result = hgaLastOptimize;
     const refreshStatus = getSyncRefreshStatus() as any;
     settingsMap.sync_snapshot_status = String(refreshStatus.snapshot_status || 'unknown');
     settingsMap.sync_snapshot_message = String(refreshStatus.snapshot_message || '');
@@ -1705,6 +1855,18 @@ async function startServer() {
         ? Math.max(MIN_SYNC_INTERVAL_SECONDS, parsed)
         : DEFAULT_SYNC_INTERVAL_SECONDS;
     }
+    if (values.sync_schedule_mode !== undefined) {
+      const mode = String(values.sync_schedule_mode || '').trim();
+      values.sync_schedule_mode = mode === 'manual_only' || mode === 'polling_only' || mode === 'hybrid'
+        ? mode
+        : DEFAULT_SCHEDULE_MODE;
+    }
+    if (values.fallback_polling_seconds !== undefined) {
+      const parsed = Number.parseInt(String(values.fallback_polling_seconds), 10);
+      values.fallback_polling_seconds = Number.isFinite(parsed)
+        ? Math.max(MIN_FALLBACK_POLLING_SECONDS, Math.min(MAX_FALLBACK_POLLING_SECONDS, parsed))
+        : DEFAULT_FALLBACK_POLLING_SECONDS;
+    }
     if (isAdminUser(req.user)) {
       if (values.hga_enabled !== undefined) {
         values.hga_enabled = values.hga_enabled === true;
@@ -1782,6 +1944,23 @@ async function startServer() {
       return res.status(500).json({
         status: 'failed',
         message: err?.message || 'HGA test failed',
+      });
+    }
+  });
+
+  app.post('/api/settings/hga/optimize-tuning', authenticateToken, authorizeAdmin, async (req: AuthRequest, res) => {
+    try {
+      const rounds = Number.parseInt(String(req.body?.rounds ?? 4), 10);
+      const sampleSize = Number.parseInt(String(req.body?.sample_size ?? 12), 10);
+      const result = await CrawlerService.optimizeHgaTuning({
+        rounds: Number.isFinite(rounds) ? rounds : 4,
+        sample_size: Number.isFinite(sampleSize) ? sampleSize : 12,
+      });
+      return res.json({ status: 'ok', ...result });
+    } catch (err: any) {
+      return res.status(500).json({
+        status: 'failed',
+        message: err?.message || 'HGA tuning optimization failed',
       });
     }
   });
@@ -1922,6 +2101,7 @@ async function startServer() {
   });
 
   // Vite development / production bootstrap
+  console.log(`[mode] NODE_ENV: ${process.env.NODE_ENV}`);
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1929,10 +2109,19 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.resolve(process.cwd(), 'dist');
+    console.log(`[server] Serving static files from: ${distPath}`);
+    if (!fs.existsSync(distPath)) {
+      console.error(`[server] ERROR: dist directory NOT FOUND at ${distPath}`);
+    }
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(404).send(`index.html not found at ${indexPath}`);
+      }
     });
   }
 
@@ -2061,6 +2250,7 @@ async function startServer() {
 
   const server = app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`[db] active database path: ${dbPath}`);
     // Startup check: if matches table is empty, run one initial sync.
     try {
       const count = db.prepare('SELECT COUNT(*) as count FROM matches').get() as any;
@@ -2197,12 +2387,22 @@ async function startServer() {
         currentAutoScanIntervalSeconds = getEffectiveSyncIntervalSeconds();
         return;
       }
-      const baseInterval = getEffectiveSyncIntervalSeconds();
-      const nextInterval = getAdaptiveSyncIntervalSeconds(baseInterval);
-      currentAutoScanIntervalSeconds = nextInterval;
-      nextAutoScanAtMs = Date.now() + nextInterval * 1000;
+      const configuredInterval = getEffectiveSyncIntervalSeconds();
+      const mode = getSyncScheduleMode();
+      if (mode === 'manual_only') {
+        nextAutoScanAtMs = 0;
+        currentAutoScanIntervalSeconds = configuredInterval;
+        console.log('Background sync scheduler is in manual_only mode; waiting for manual trigger only');
+        return;
+      }
+      currentAutoScanIntervalSeconds = configuredInterval;
+      const lastSyncAtMs = getLastSyncTimeMs();
+      const nextDelaySeconds = mode === 'polling_only' ? getFallbackPollingSeconds() : configuredInterval;
+      nextAutoScanAtMs = lastSyncAtMs > 0
+        ? lastSyncAtMs + nextDelaySeconds * 1000
+        : Date.now() + nextDelaySeconds * 1000;
       if (scanTimer) clearTimeout(scanTimer);
-      scanTimer = setTimeout(runCycle, nextInterval * 1000);
+      scanTimer = setTimeout(runCycle, SCHEDULER_HEARTBEAT_SECONDS * 1000);
     };
 
     const runCycle = async () => {
@@ -2211,8 +2411,57 @@ async function startServer() {
         scheduleNext();
         return;
       }
+      const adminRef = db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as any;
+      if (!adminRef) {
+        scheduleNext();
+        return;
+      }
+      const autoRef = db.prepare("SELECT value FROM system_settings WHERE key = 'auto_scan' AND user_id = ?").get(adminRef.id) as any;
+      if (autoRef?.value !== 'true') {
+        scheduleNext();
+        return;
+      }
+
+      const now = Date.now();
+      const mode = getSyncScheduleMode();
+      const configuredInterval = getEffectiveSyncIntervalSeconds();
+      if (mode === 'manual_only') {
+        currentAutoScanIntervalSeconds = configuredInterval;
+        nextAutoScanAtMs = 0;
+        console.log('Skip background sync: schedule_mode=manual_only only allows manual API triggers');
+        scheduleNext();
+        return;
+      }
+      const adaptiveConfiguredInterval = getAdaptiveSyncIntervalSeconds(configuredInterval);
+      const fallbackPollingSeconds = getFallbackPollingSeconds();
+      const lastSyncAtMs = getLastSyncTimeMs();
+      const elapsedMs = lastSyncAtMs > 0 ? now - lastSyncAtMs : Number.POSITIVE_INFINITY;
+      const configuredDueMs = adaptiveConfiguredInterval * 1000;
+      const fallbackDueMs = fallbackPollingSeconds * 1000;
+      const overdueFallbackMs = Math.max(fallbackDueMs, configuredDueMs + 60 * 1000);
+
+      const dueByConfigured = elapsedMs >= configuredDueMs;
+      const dueByFallbackOnly = elapsedMs >= fallbackDueMs;
+      const dueByFallbackHybrid = elapsedMs >= overdueFallbackMs;
+
+      currentAutoScanIntervalSeconds = adaptiveConfiguredInterval;
+      nextAutoScanAtMs = lastSyncAtMs > 0
+        ? lastSyncAtMs + configuredDueMs
+        : now + configuredDueMs;
+
+      const shouldRun = mode === 'polling_only'
+        ? dueByFallbackOnly
+        : (dueByConfigured || dueByFallbackHybrid);
+
+      if (!shouldRun) {
+        scheduleNext();
+        return;
+      }
+
       autoScanRunning = true;
-      console.log(`Running background sync and scan (adaptive interval ${currentAutoScanIntervalSeconds}s)...`);
+      console.log(
+        `Running background sync and scan (mode=${mode}, configured=${adaptiveConfiguredInterval}s, fallback=${fallbackPollingSeconds}s, elapsed=${Math.floor(elapsedMs / 1000)}s)...`
+      );
       try {
         await CrawlerService.syncFromExternalScraper();
         setLastSyncTimeMs(Date.now());
@@ -2225,7 +2474,9 @@ async function startServer() {
       }
     };
 
-    console.log(`Starting global auto scan with adaptive interval (base ${getEffectiveSyncIntervalSeconds()} seconds)`);
+    console.log(
+      `Starting global auto scan (mode=${getSyncScheduleMode()}, configured_base=${getEffectiveSyncIntervalSeconds()}s, fallback=${getFallbackPollingSeconds()}s, heartbeat=${SCHEDULER_HEARTBEAT_SECONDS}s)`
+    );
     scheduleNext();
   }
 

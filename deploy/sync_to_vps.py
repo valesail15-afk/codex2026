@@ -176,9 +176,33 @@ def main() -> int:
             safe_print(mounts)
 
         if not args.skip_build:
-            safe_print("[5/5] 重建并启动容器")
-            safe_print(run(ssh, f"cd {remote_dir} && docker compose up -d --build", timeout=600))
-            safe_print(run(ssh, "docker ps --format '{{.Names}} {{.Status}} {{.Ports}}'", timeout=60))
+            safe_print("[5/5] 重启线上服务")
+            try:
+                # 尝试 docker compose (原有逻辑)
+                safe_print("尝试使用 docker compose 重启...")
+                run(ssh, f"cd {remote_dir} && docker compose up -d --build", timeout=600)
+                safe_print(run(ssh, "docker ps --format '{{.Names}} {{.Status}} {{.Ports}}'", timeout=60))
+            except RuntimeError as e:
+                if "docker: command not found" in str(e) or "docker-compose: command not found" in str(e):
+                    safe_print("VPS 未安装 Docker，尝试使用 pm2 或直接进程重启...")
+                    
+                    # 尝试 pm2
+                    pm2_check = run(ssh, "pm2 -v || echo 'not found'", timeout=20)
+                    if "not found" not in pm2_check:
+                        safe_print(f"检测到 PM2 (版本: {pm2_check})，尝试 pm2 reload...")
+                        run(ssh, f"cd {remote_dir} && pm2 reload deploy/ecosystem.config.cjs || pm2 start deploy/ecosystem.config.cjs", timeout=60)
+                    else:
+                        # 直接杀死旧进程并后台启动
+                        safe_print("尝试直接杀死旧进程并使用 tsx 启动...")
+                        # 查找并杀死旧进程 (server.ts)
+                        ssh.exec_command("pkill -f 'tsx server.ts'")
+                        time.sleep(2)
+                        # 后台启动 (使用 nohup)
+                        start_cmd = f"cd {remote_dir} && nohup ./node_modules/.bin/tsx server.ts > app.log 2>&1 &"
+                        ssh.exec_command(start_cmd)
+                        safe_print("服务已在后台启动 (nohup)")
+                else:
+                    raise e
         else:
             safe_print("[5/5] 已跳过远程构建")
 

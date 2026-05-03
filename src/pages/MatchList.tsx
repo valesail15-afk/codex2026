@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { App, Card, Space, Table, Tag, Typography } from 'antd';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import dayjs from 'dayjs';
 
@@ -348,42 +349,32 @@ const formatOverUnderOddsBlock = (ouOdds?: OverUnderOddsItem[] | string | null) 
 
 const MatchList: React.FC = () => {
   const { message } = App.useApp();
-  const [matches, setMatches] = useState<MatchRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [refreshStatus, setRefreshStatus] = useState<RefreshStatus | null>(null);
+  const queryClient = useQueryClient();
   const [remainingSeconds, setRemainingSeconds] = useState(0);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
   const wsRefreshDebounceRef = useRef<number | null>(null);
   const crownHandicapDisplayLimit = Number.MAX_SAFE_INTEGER;
 
-  const fetchMatches = async () => {
-    setLoading(true);
-    try {
+  // 1. 获取比赛列表
+  const { data: matches = [], isLoading: matchesLoading } = useQuery({
+    queryKey: ['matches'],
+    queryFn: async () => {
       const res = await axios.get('/api/matches');
-      setMatches(Array.isArray(res.data) ? res.data : []);
-    } catch {
-      message.error('获取比赛列表失败');
-    } finally {
-      setLoading(false);
-    }
-  };
+      return Array.isArray(res.data) ? res.data : [];
+    },
+  });
 
-  const fetchRefreshStatus = async () => {
-    try {
+  // 2. 获取刷新状态
+  const { data: refreshStatus = null } = useQuery({
+    queryKey: ['refresh-status'],
+    queryFn: async () => {
       const res = await axios.get('/api/matches/refresh-status');
       const status = res.data as RefreshStatus;
-      setRefreshStatus(status);
       setRemainingSeconds(Math.max(0, Number(status?.remaining_seconds || 0)));
-    } catch {
-      // ignore
-    }
-  };
-
-  useEffect(() => {
-    fetchMatches();
-    fetchRefreshStatus();
-  }, []);
+      return status;
+    },
+  });
 
   useEffect(() => {
     let socket: WebSocket | null = null;
@@ -393,7 +384,7 @@ const MatchList: React.FC = () => {
     const scheduleMatchesRefresh = () => {
       if (wsRefreshDebounceRef.current) window.clearTimeout(wsRefreshDebounceRef.current);
       wsRefreshDebounceRef.current = window.setTimeout(() => {
-        fetchMatches();
+        queryClient.invalidateQueries({ queryKey: ['matches'] });
       }, 800);
     };
 
@@ -408,10 +399,10 @@ const MatchList: React.FC = () => {
           if (payload.type !== 'sync_update' && payload.type !== 'sync_status') return;
 
           if (payload.refresh_status) {
-            setRefreshStatus(payload.refresh_status);
+            queryClient.setQueryData(['refresh-status'], payload.refresh_status);
             setRemainingSeconds(Math.max(0, Number(payload.refresh_status?.remaining_seconds || 0)));
           } else {
-            fetchRefreshStatus();
+            queryClient.invalidateQueries({ queryKey: ['refresh-status'] });
           }
 
           if (payload.type === 'sync_update' && payload.has_changes) {
@@ -423,7 +414,7 @@ const MatchList: React.FC = () => {
       };
 
       socket.onopen = () => {
-        fetchRefreshStatus();
+        queryClient.invalidateQueries({ queryKey: ['refresh-status'] });
       };
 
       socket.onclose = () => {
@@ -467,13 +458,8 @@ const MatchList: React.FC = () => {
     const countdownTimer = window.setInterval(() => {
       setRemainingSeconds((prev) => (prev > 0 ? prev - 1 : 0));
     }, 1000);
-    const pollTimer = window.setInterval(() => {
-      fetchRefreshStatus();
-      fetchMatches();
-    }, 15000);
     return () => {
       window.clearInterval(countdownTimer);
-      window.clearInterval(pollTimer);
     };
   }, []);
 
@@ -562,7 +548,7 @@ const MatchList: React.FC = () => {
           dataSource={matches}
           columns={columns}
           rowKey="match_id"
-          loading={loading}
+          loading={matchesLoading}
           size="small"
           tableLayout="fixed"
           scroll={{ x: 'max-content' }}
@@ -571,7 +557,7 @@ const MatchList: React.FC = () => {
             pageSize,
             size: 'small',
             showSizeChanger: true,
-            pageSizeOptions: ['10', '20', '50', '100'],
+            pageSizeOptions: ['50', '100'],
             onShowSizeChange: (_, size) => {
               setPageSize(size);
               setCurrentPage(1);

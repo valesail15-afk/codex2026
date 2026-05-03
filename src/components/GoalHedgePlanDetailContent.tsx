@@ -1,7 +1,8 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, App, Card, Collapse, Empty, Space, Spin, Table, Tag, Typography } from 'antd';
 import axios from 'axios';
 import type { HedgeStrategy } from '../types';
+import BetStakeCalculatorModal from './BetStakeCalculatorModal';
 
 const { Title, Text } = Typography;
 
@@ -399,7 +400,12 @@ const GoalHedgePlanDetailContent: React.FC<GoalHedgePlanDetailContentProps> = ({
         </Title>
       ) : null}
 
-      <Card size="small" title="下注方案详情" style={{ marginBottom: 12 }}>
+      <Card
+        size="small"
+        title="下注方案详情"
+        extra={<BetStakeCalculatorModal strategy={strategy} shares={{ jingcai: jcShare, crown: crownShare }} />}
+        style={{ marginBottom: 12 }}
+      >
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', background: '#fff' }}>
             <thead>

@@ -1,6 +1,8 @@
-﻿import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { App, Button, Card, Col, Empty, InputNumber, Modal, Pagination, Progress, Row, Select, Space, Spin, Statistic, Table, Tag, Typography } from 'antd';
 import { CheckCircleOutlined, FireOutlined, RocketOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import dayjs from 'dayjs';
 import { invertHandicap, normalizeCrownTarget } from '../shared/oddsText';
@@ -95,12 +97,12 @@ const normalizeSingleMatrixRecord = (record: any) => {
   const fallbackJcMatrix = {
     standard: {
       W: { key: 'jc_standard_W', label: '主胜', odds: toOdds(record?.j_w) },
-      D: { key: 'jc_standard_D', label: '平', odds: toOdds(record?.j_d) },
+      D: { key: 'jc_standard_D', label: '平局', odds: toOdds(record?.j_d) },
       L: { key: 'jc_standard_L', label: '客胜', odds: toOdds(record?.j_l) },
     },
     handicap: {
       W: { key: 'jc_handicap_W', label: `主胜(${handicapLine})`, odds: toOdds(record?.j_hw) },
-      D: { key: 'jc_handicap_D', label: `平(${handicapLine})`, odds: toOdds(record?.j_hd) },
+      D: { key: 'jc_handicap_D', label: `平局(${handicapLine})`, odds: toOdds(record?.j_hd) },
       L: { key: 'jc_handicap_L', label: `客胜(${invertHandicap(handicapLine)})`, odds: toOdds(record?.j_hl) },
     },
   };
@@ -108,7 +110,7 @@ const normalizeSingleMatrixRecord = (record: any) => {
   const fallbackCrownMatrix = {
     standard: {
       W: { key: 'crown_standard_W', label: '主胜', odds: toOdds(record?.c_w) },
-      D: { key: 'crown_standard_D', label: '平', odds: toOdds(record?.c_d) },
+      D: { key: 'crown_standard_D', label: '平局', odds: toOdds(record?.c_d) },
       L: { key: 'crown_standard_L', label: '客胜', odds: toOdds(record?.c_l) },
     },
     handicapRows: parseHandicapRows(record?.c_h)
@@ -272,12 +274,12 @@ const normalizeParlayMatrixRecord = (record: any) => {
       jc: {
         standard: {
           W: { key: `${prefix}_jc_standard_W`, label: '主胜', odds: toOdds(match?.j_w) },
-          D: { key: `${prefix}_jc_standard_D`, label: '平', odds: toOdds(match?.j_d) },
+          D: { key: `${prefix}_jc_standard_D`, label: '平局', odds: toOdds(match?.j_d) },
           L: { key: `${prefix}_jc_standard_L`, label: '客胜', odds: toOdds(match?.j_l) },
         },
         handicap: {
           W: { key: `${prefix}_jc_handicap_W`, label: `主胜(${handicapLine})`, odds: toOdds(match?.j_hw) },
-          D: { key: `${prefix}_jc_handicap_D`, label: `平(${handicapLine})`, odds: toOdds(match?.j_hd) },
+          D: { key: `${prefix}_jc_handicap_D`, label: `平局(${handicapLine})`, odds: toOdds(match?.j_hd) },
           L: { key: `${prefix}_jc_handicap_L`, label: `客胜(${invertHandicap(handicapLine)})`, odds: toOdds(match?.j_hl) },
         },
       },
@@ -392,102 +394,109 @@ const normalizeParlayMatrixRecord = (record: any) => {
 
 const Dashboard: React.FC = () => {
   const { message } = App.useApp();
+  const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const auth = useContext(AuthContext);
   const isAdmin = auth?.user?.role === 'Admin';
 
-  const [opportunitiesByType, setOpportunitiesByType] = useState<Record<OppType, any[]>>({
-    single: [],
-    parlay: [],
-    hg: [],
-    goal_hedge: [],
-  });
-  const [scrapeHealth, setScrapeHealth] = useState<{ stats: any; rows: any[] } | null>(null);
-  const [scrapeHealthError, setScrapeHealthError] = useState('');
-  const [loadingByType, setLoadingByType] = useState<Record<OppType, boolean>>({
-    single: true,
-    parlay: true,
-    hg: true,
-    goal_hedge: true,
-  });
-  const [calculating, setCalculating] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [oppType, setOppType] = useState<OppType>('single');
   const [singleBaseType, setSingleBaseType] = useState<SingleBaseType>('jingcai');
   const [parlayBaseType, setParlayBaseType] = useState<ParlayBaseType>('jingcai');
   const [minProfitFilter, setMinProfitFilter] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+
+  const [calculating, setCalculating] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [savingArbitrageSettings, setSavingArbitrageSettings] = useState(false);
+
   const [detailModal, setDetailModal] = useState<{ open: boolean; type: OppType; record: any | null }>({
     open: false,
     type: 'single',
     record: null,
   });
+
   const [arbitrageSettings, setArbitrageSettings] = useState<ArbitrageSettings>({
     default_jingcai_rebate: 0.13,
     default_crown_rebate: 0.02,
     default_jingcai_share: 0,
     default_crown_share: 0,
   });
-  const [arbitrageSettingsLoading, setArbitrageSettingsLoading] = useState(false);
-  const [savingArbitrageSettings, setSavingArbitrageSettings] = useState(false);
 
-  const fetchArbitrageSettings = async () => {
-    setArbitrageSettingsLoading(true);
-    try {
-      let data: any;
+  // 1. 获取套利参数
+  const { isLoading: settingsLoading } = useQuery({
+    queryKey: ['arbitrage-settings'],
+    queryFn: async () => {
       try {
         const res = await axios.get('/api/arbitrage/settings');
-        data = res.data;
+        return res.data;
       } catch {
         const fallbackRes = await axios.get('/api/settings');
-        data = fallbackRes.data;
+        return fallbackRes.data;
       }
-      setArbitrageSettings({
-        default_jingcai_rebate: Number(data?.default_jingcai_rebate ?? 0.13),
-        default_crown_rebate: Number(data?.default_crown_rebate ?? 0.02),
-        default_jingcai_share: Number(data?.default_jingcai_share ?? 0),
-        default_crown_share: Number(data?.default_crown_share ?? 0),
-      });
-    } catch {
-      message.error('加载套利参数失败');
-    } finally {
-      setArbitrageSettingsLoading(false);
+    },
+    meta: {
+      onSuccess: (data: any) => {
+        setArbitrageSettings({
+          default_jingcai_rebate: Number(data?.default_jingcai_rebate ?? 0.13),
+          default_crown_rebate: Number(data?.default_crown_rebate ?? 0.02),
+          default_jingcai_share: Number(data?.default_jingcai_share ?? 0),
+          default_crown_share: Number(data?.default_crown_share ?? 0),
+        });
+      },
     }
-  };
+  } as any);
 
-  const fetchData = async (targetType: OppType = oppType) => {
-    setLoadingByType((prev) => ({ ...prev, [targetType]: true }));
-    try {
-      const endpoint = targetType === 'parlay' ? '/api/arbitrage/parlay-opportunities' : '/api/arbitrage/opportunities';
-      const baseType =
-        targetType === 'hg'
-          ? 'hg'
-          : targetType === 'goal_hedge'
-          ? 'goal_hedge'
-          : targetType === 'parlay'
-          ? parlayBaseType
-          : singleBaseType;
-      const res = await axios.get(endpoint, { params: { base_type: baseType } });
+  // 2. 获取套利机会
+  const currentBaseType =
+    oppType === 'hg'
+      ? 'hg'
+      : oppType === 'goal_hedge'
+      ? 'goal_hedge'
+      : oppType === 'parlay'
+      ? parlayBaseType
+      : singleBaseType;
+
+  const { data: opportunities = [], isLoading: opportunitiesLoading } = useQuery({
+    queryKey: ['opportunities', oppType, currentBaseType],
+    queryFn: async () => {
+      const endpoint = oppType === 'parlay' ? '/api/arbitrage/parlay-opportunities' : '/api/arbitrage/opportunities';
+      const res = await axios.get(endpoint, { params: { base_type: currentBaseType } });
       const list = Array.isArray(res.data) ? res.data : [];
-      list.sort((a: any, b: any) => (b.profit_rate || 0) - (a.profit_rate || 0));
-      setOpportunitiesByType((prev) => ({ ...prev, [targetType]: list }));
+      return list.sort((a: any, b: any) => (b.profit_rate || 0) - (a.profit_rate || 0));
+    },
+  });
 
-      if (isAdmin) {
-        try {
-          const health = await axios.get('/api/admin/scrape-health', { params: { limit: 10 } });
-          setScrapeHealth(health.data || null);
-          setScrapeHealthError('');
-        } catch {
-          setScrapeHealth(null);
-          setScrapeHealthError('抓取健康数据加载失败');
-        }
-      } else {
-        setScrapeHealth(null);
-        setScrapeHealthError('');
+  // 弹窗状态同步 (Superpowers 持久化机制)
+  useEffect(() => {
+    const modalType = searchParams.get('modal_type') as OppType;
+    const modalId = searchParams.get('modal_id');
+    
+    if (modalType && modalId) {
+      const currentId = detailModal.type === 'parlay' ? detailModal.record?.id : detailModal.record?.match_id;
+      if (!detailModal.open || detailModal.type !== modalType || String(currentId) !== modalId) {
+        const found = opportunities.find((o: any) => String(o.id) === modalId || String(o.match_id) === modalId);
+        setDetailModal({
+          open: true,
+          type: modalType,
+          record: found || { id: modalId, match_id: modalId, is_restored: true },
+        });
       }
-    } finally {
-      setLoadingByType((prev) => ({ ...prev, [targetType]: false }));
+    } else if (detailModal.open) {
+      setDetailModal({ open: false, type: 'single', record: null });
     }
-  };
+  }, [searchParams, opportunities]);
+
+  // 3. 获取抓取健康（仅管理员）
+  const { data: scrapeHealth = null, error: scrapeHealthErrorRaw } = useQuery({
+    queryKey: ['scrape-health'],
+    queryFn: async () => {
+      const res = await axios.get('/api/admin/scrape-health', { params: { limit: 10 } });
+      return res.data || null;
+    },
+    enabled: isAdmin,
+  });
+
+  const scrapeHealthError = scrapeHealthErrorRaw ? '抓取健康数据加载失败' : '';
 
   const handleSaveArbitrageSettings = async () => {
     Modal.confirm({
@@ -511,7 +520,7 @@ const Dashboard: React.FC = () => {
           await axios.post('/api/arbitrage/rescan');
           setProgress(100);
           message.success('参数已保存并完成重算');
-          await fetchData(oppType);
+          queryClient.invalidateQueries({ queryKey: ['opportunities'] });
         } catch {
           message.error('保存或重算失败，请重试');
         } finally {
@@ -524,19 +533,54 @@ const Dashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchData(oppType);
-  }, [oppType, singleBaseType, parlayBaseType, isAdmin]);
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let closed = false;
 
-  useEffect(() => {
-    fetchArbitrageSettings();
-  }, [isAdmin]);
+    const connect = () => {
+      if (closed) return;
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      socket = new WebSocket(`${wsProtocol}://${window.location.host}/ws/matches`);
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data || '{}');
+          if (payload.type === 'sync_update' && payload.has_changes) {
+            // 静默失效当前看板数据，React Query 会自动重新拉取
+            queryClient.invalidateQueries({ queryKey: ['opportunities'] });
+            if (isAdmin) {
+              queryClient.invalidateQueries({ queryKey: ['scrape-health'] });
+            }
+          }
+        } catch {
+          // ignore
+        }
+      };
+
+      socket.onclose = () => {
+        if (closed) return;
+        reconnectTimer = window.setTimeout(connect, 3000);
+      };
+
+      socket.onerror = () => {
+        socket?.close();
+      };
+    };
+
+    connect();
+
+    return () => {
+      closed = true;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      socket?.close();
+    };
+  }, [oppType, isAdmin]);
 
   useEffect(() => {
     setCurrentPage(1);
   }, [oppType, minProfitFilter]);
 
-  const opportunities = opportunitiesByType[oppType] || [];
-  const loading = loadingByType[oppType];
+  const loading = opportunitiesLoading;
 
   const filtered = useMemo(
     () => opportunities.filter((item) => Number(item?.profit_rate || 0) >= minProfitFilter),
@@ -572,11 +616,15 @@ const Dashboard: React.FC = () => {
   }, [currentPage, filtered, oppType]);
 
   const openDetailModal = (type: OppType, record: any) => {
-    setDetailModal({ open: true, type, record });
+    const id = type === 'parlay' ? record.id : record.match_id;
+    setSearchParams({ ...Object.fromEntries(searchParams), modal_type: type, modal_id: String(id) });
   };
 
   const closeDetailModal = () => {
-    setDetailModal({ open: false, type: detailModal.type, record: null });
+    const params = Object.fromEntries(searchParams);
+    delete params.modal_type;
+    delete params.modal_id;
+    setSearchParams(params);
   };
 
   const renderMatrixCell = (highlightKeys: string[], cell?: MatrixCell | null, baseBg = '#fff') => {
@@ -1055,10 +1103,12 @@ const Dashboard: React.FC = () => {
     );
   };
 
-  const modalTitle =
-    detailModal.type === 'parlay'
+  const modalTitle = useMemo(() => {
+    if (detailModal.record?.is_restored) return '正在恢复方案详情...';
+    return detailModal.type === 'parlay'
       ? `二串一方案：${detailModal.record?.home_team_1 || ''} vs ${detailModal.record?.away_team_1 || ''} × ${detailModal.record?.home_team_2 || ''} vs ${detailModal.record?.away_team_2 || ''}`
       : `${detailModal.type === 'hg' ? 'HG对冲方案' : detailModal.type === 'goal_hedge' ? '进球对冲方案' : '单场方案'}：${detailModal.record?.home_team || ''} vs ${detailModal.record?.away_team || ''}`;
+  }, [detailModal]);
 
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto' }}>
@@ -1104,7 +1154,7 @@ const Dashboard: React.FC = () => {
                 type="primary"
                 onClick={handleSaveArbitrageSettings}
                 loading={savingArbitrageSettings}
-                disabled={arbitrageSettingsLoading}
+                disabled={settingsLoading}
               >
                 保存并重算
               </Button>
@@ -1122,7 +1172,7 @@ const Dashboard: React.FC = () => {
                 max={100}
                 precision={2}
                 value={Number((arbitrageSettings.default_jingcai_rebate * 100).toFixed(2))}
-                disabled={arbitrageSettingsLoading || savingArbitrageSettings}
+                disabled={settingsLoading || savingArbitrageSettings}
                 onChange={(value) =>
                   setArbitrageSettings((prev) => ({
                     ...prev,
@@ -1141,7 +1191,7 @@ const Dashboard: React.FC = () => {
                 max={100}
                 precision={2}
                 value={Number((arbitrageSettings.default_crown_rebate * 100).toFixed(2))}
-                disabled={arbitrageSettingsLoading || savingArbitrageSettings}
+                disabled={settingsLoading || savingArbitrageSettings}
                 onChange={(value) =>
                   setArbitrageSettings((prev) => ({
                     ...prev,
@@ -1160,7 +1210,7 @@ const Dashboard: React.FC = () => {
                 max={100}
                 precision={1}
                 value={Number((arbitrageSettings.default_jingcai_share * 100).toFixed(1))}
-                disabled={arbitrageSettingsLoading || savingArbitrageSettings}
+                disabled={settingsLoading || savingArbitrageSettings}
                 onChange={(value) =>
                   setArbitrageSettings((prev) => ({
                     ...prev,
@@ -1179,7 +1229,7 @@ const Dashboard: React.FC = () => {
                 max={100}
                 precision={1}
                 value={Number((arbitrageSettings.default_crown_share * 100).toFixed(1))}
-                disabled={arbitrageSettingsLoading || savingArbitrageSettings}
+                disabled={settingsLoading || savingArbitrageSettings}
                 onChange={(value) =>
                   setArbitrageSettings((prev) => ({
                     ...prev,
