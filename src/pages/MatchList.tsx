@@ -112,6 +112,19 @@ const formatHandicapType = (type?: string) => {
   return `${sign}${parts.map((p) => Number(p).toFixed(2)).join('/')}`;
 };
 
+const isUnavailableHandicap = (value?: string) => {
+  const text = String(value || '').trim();
+  return !text || text === '-' || text === '未开售';
+};
+
+const resolveJcHandicapDisplay = (record: MatchRow) => {
+  const jc = String(record.jc_handicap || '').trim();
+  if (!isUnavailableHandicap(jc)) return jc;
+  const fallback = String(record.handicap || '').trim();
+  if (!isUnavailableHandicap(fallback)) return fallback;
+  return '未开售';
+};
+
 const oppositeHandicapType = (type?: string) => {
   const formatted = formatHandicapType(type);
   const body = formatted.replace(/^[+-]/, '');
@@ -217,8 +230,10 @@ const renderOddsTag = (label: string, odds: number | undefined, color: 'blue' | 
 };
 
 const formatJingcaiOddsBlock = (record: MatchRow) => {
-  const line = formatHandicapType(record.jc_handicap || '0');
-  const oppositeLine = oppositeHandicapType(line);
+  const rawLine = resolveJcHandicapDisplay(record);
+  const hasValidLine = !isUnavailableHandicap(rawLine);
+  const line = hasValidLine ? formatHandicapType(rawLine) : '';
+  const oppositeLine = hasValidLine ? oppositeHandicapType(line) : '';
   const hasHandicap =
     formatOdds(record.j_hw) !== '-' || formatOdds(record.j_hd) !== '-' || formatOdds(record.j_hl) !== '-';
 
@@ -229,9 +244,9 @@ const formatJingcaiOddsBlock = (record: MatchRow) => {
       <div>{renderOddsTag('客胜', record.j_l, 'red')}</div>
       {hasHandicap ? (
         <>
-          <div>{renderOddsTag(`主胜(${line})`, record.j_hw, 'blue')}</div>
-          <div>{renderOddsTag(`平(${line})`, record.j_hd, 'gold')}</div>
-          <div>{renderOddsTag(`客胜(${oppositeLine})`, record.j_hl, 'red')}</div>
+          <div>{renderOddsTag(hasValidLine ? `主胜(${line})` : '主胜', record.j_hw, 'blue')}</div>
+          <div>{renderOddsTag(hasValidLine ? `平(${line})` : '平', record.j_hd, 'gold')}</div>
+          <div>{renderOddsTag(hasValidLine ? `客胜(${oppositeLine})` : '客胜', record.j_hl, 'red')}</div>
         </>
       ) : null}
     </div>
@@ -272,7 +287,12 @@ const formatHandicapAlignBlockV2 = (record: MatchRow) => {
   const hasJcHandicapOdds =
     formatOdds(record.j_hw) !== '-' || formatOdds(record.j_hd) !== '-' || formatOdds(record.j_hl) !== '-';
   const stdHandicap = hasStandardOdds ? '0' : '未开售';
-  const jcHandicap = hasJcHandicapOdds ? compactHandicapDisplay(String(record.jc_handicap || '').trim()) || '-' : '未开售';
+  const jcHandicapRaw = resolveJcHandicapDisplay(record);
+  const jcHandicap = hasJcHandicapOdds
+    ? jcHandicapRaw === '未开售'
+      ? '未开售'
+      : compactHandicapDisplay(jcHandicapRaw) || '-'
+    : '未开售';
   const blank = <span>&nbsp;</span>;
   return (
     <div style={{ lineHeight: 1.5 }}>

@@ -33,6 +33,19 @@ const parseCrownHandicapRows = (raw: any) => {
 
 const formatPercent = (value: number) => `${(Number(value || 0) * 100).toFixed(1)}%`;
 
+const isUnavailableHandicapLine = (value: any) => {
+  const text = String(value || '').trim();
+  return !text || text === '-' || text === '未开售';
+};
+
+const resolveJcHandicapLine = (record: any) => {
+  const jc = String(record?.jc_handicap || record?.j_h || '').trim();
+  if (!isUnavailableHandicapLine(jc)) return jc;
+  const fallback = String(record?.handicap || '').trim();
+  if (!isUnavailableHandicapLine(fallback)) return fallback;
+  return '0';
+};
+
 const formatJcSideLabel = (side: Side, market: Market, line: string) => {
   if (market === 'normal') {
     if (side === 'W') return '主胜';
@@ -103,7 +116,7 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
 
   const jcOptions = useMemo(() => {
     if (!matchInfo) return [];
-    const line = String(matchInfo.jc_handicap || matchInfo.j_h || '0').trim() || '0';
+    const line = resolveJcHandicapLine(matchInfo);
     const list: Array<{ value: string; label: string; betLabel: string; side: Side; market: Market; odds: number }> = [
       { value: 'normal_W', label: `${formatJcSideLabel('W', 'normal', line)} ${matchInfo.j_w || '-'}`, betLabel: formatJcSideLabel('W', 'normal', line), side: 'W', market: 'normal', odds: Number(matchInfo.j_w || 0) },
       { value: 'normal_D', label: `${formatJcSideLabel('D', 'normal', line)} ${matchInfo.j_d || '-'}`, betLabel: formatJcSideLabel('D', 'normal', line), side: 'D', market: 'normal', odds: Number(matchInfo.j_d || 0) },
@@ -327,7 +340,7 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
     const picked = currentPickedOption;
     const jcSide = (picked?.side || selected.jcSide || 'W') as Side;
     const jcMarket = (picked?.market || selected.jc_market || 'normal') as Market;
-    const jcLine = String(matchInfo?.jc_handicap || matchInfo?.j_h || '0');
+    const jcLine = resolveJcHandicapLine(matchInfo);
     const jcOdds = getCurrentJcOdds(selected);
     const crownBets = selected.crown_bets || [];
     const invest = Number(selected.user_invest || 0);
@@ -582,7 +595,7 @@ const SinglePlanDetailContent: React.FC<SinglePlanDetailContentProps> = ({
       });
     };
 
-    const line = String(matchInfo.jc_handicap || matchInfo.j_h || '0').trim() || '0';
+    const line = resolveJcHandicapLine(matchInfo);
     const picked = currentPickedOption;
     const pickSideOutcome = (prefix: 'win' | 'draw' | 'lose') => {
       const rows = outcomeRows.filter((row) => String(row?.key || '').startsWith(prefix));

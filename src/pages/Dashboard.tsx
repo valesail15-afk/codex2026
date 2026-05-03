@@ -47,6 +47,19 @@ const toOdds = (value: any) => {
   return Number.isFinite(n) && n > 0 ? n : 0;
 };
 
+const isUnavailableHandicapLine = (value: any) => {
+  const text = String(value || '').trim();
+  return !text || text === '-' || text === '未开售';
+};
+
+const resolveJcHandicapLine = (record: any) => {
+  const jc = String(record?.jc_handicap || record?.j_h || '').trim();
+  if (!isUnavailableHandicapLine(jc)) return jc;
+  const fallback = String(record?.handicap || '').trim();
+  if (!isUnavailableHandicapLine(fallback)) return fallback;
+  return '0';
+};
+
 const parseHandicapRows = (raw: any) => {
   let parsed = raw;
   if (typeof raw === 'string') {
@@ -88,7 +101,7 @@ const buildHighlightKeys = (record: any) => {
 };
 
 const normalizeSingleMatrixRecord = (record: any) => {
-  const handicapLine = String(record?.jc_handicap || record?.j_h || '0').trim() || '0';
+  const handicapLine = resolveJcHandicapLine(record);
   const pickCell = (preferred: any, fallback: MatrixCell) => {
     if (preferred && Number(preferred.odds || 0) > 0) return preferred;
     return fallback;
@@ -268,7 +281,7 @@ const normalizeParlayMatrixRecord = (record: any) => {
   };
 
   const buildFallback = (prefix: string, match: any, rawCrownHandicaps: any) => {
-    const handicapLine = String(match?.jc_handicap || '0').trim() || '0';
+    const handicapLine = resolveJcHandicapLine(match);
     const crownHandicap = buildParlayFallbackCrownHandicap(prefix, rawCrownHandicaps);
     return {
       jc: {
