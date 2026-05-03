@@ -110,6 +110,31 @@ export interface HedgeStrategy {
     need_second_hedge?: boolean;
     first_crown_hit?: boolean;
   }>;
+  goal_hedge_meta?: {
+    goal_picks: Array<{
+      goal_index: string;
+      label: string;
+      odds: number;
+      amount: number;
+    }>;
+    ou_bet: {
+      side: 'over' | 'under';
+      line: string;
+      odds: number;
+      amount: number;
+    };
+  };
+  goal_profit_breakdown?: Array<{
+    goal: string;
+    goal_label: string;
+    jc_return: number;
+    ou_return: number;
+    gross_return: number;
+    stake: number;
+    match_profit: number;
+    rebate: number;
+    total_profit: number;
+  }>;
 }
 
 export interface CrownBet {

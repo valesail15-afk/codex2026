@@ -2,8 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Card, Col, Empty, Row, Space, Tag, Typography } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
-import { invertHandicap, normalizeCrownTarget, parseCrownBetType } from '../shared/oddsText';
+import { invertHandicap, normalizeCrownTarget } from '../shared/oddsText';
+import { parseCrownBetTypeCompat } from '../shared/crownBetTypeCompat';
 import type { CrownBet, HedgeStrategy } from '../types';
+import BetStakeCalculatorModal from './BetStakeCalculatorModal';
 
 const { Title, Text } = Typography;
 
@@ -47,7 +49,7 @@ const outcomeTitle = (side: OutcomeSide) => sideLabel(side);
 const almostEq = (a: number, b: number) => Math.abs(a - b) < EPS;
 
 const getReturnCoefficient = (type: string, odds: number, outcome: OutcomeSide) => {
-  const bet = parseCrownBetType(type);
+  const bet = parseCrownBetTypeCompat(type);
   const dg = outcome === 'W' ? 1 : outcome === 'D' ? 0 : -1;
   if (bet.kind === 'std') {
     if (bet.side === 'home') return outcome === 'W' ? odds : 0;
@@ -144,6 +146,7 @@ const HgPlanDetailContent: React.FC<HgPlanDetailContentProps> = ({ matchId, init
     })();
   }, [initialStrategy, matchId]);
 
+  const jcShare = Number(settings?.default_jingcai_share ?? matchInfo?.j_s ?? 0);
   const crownShare = Number(settings?.default_crown_share ?? matchInfo?.c_s ?? 0);
   const crownRebate = Number(settings?.default_crown_rebate ?? matchInfo?.c_r ?? 0.02);
 
@@ -154,7 +157,7 @@ const HgPlanDetailContent: React.FC<HgPlanDetailContentProps> = ({ matchId, init
       const amount = Number(bet.amount || 0);
       const odds = Number(bet.odds || 0);
       if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(odds) || odds <= 0) return null;
-      const parsed = parseCrownBetType(String(bet.type || ''));
+      const parsed = parseCrownBetTypeCompat(String(bet.type || ''));
       const selectedSide: OutcomeSide = parsed.side === 'home' ? 'W' : parsed.side === 'draw' ? 'D' : 'L';
       return {
         key,
@@ -243,17 +246,23 @@ const HgPlanDetailContent: React.FC<HgPlanDetailContentProps> = ({ matchId, init
   const outcomeRows = useMemo(() => {
     if (!strategy) return [] as any[];
     const bets = allBets;
+    const stakeLines = bets.map((bet) => ({
+      text: `${bet.platform}: ${bet.target} @ ${Number(bet.odds || 0).toFixed(2)}`,
+      amount: -Number(bet.amount || 0),
+    }));
 
     return (['W', 'D', 'L'] as OutcomeSide[]).map((side) => {
       const key = sideToProfitKey(side);
-      const details = bets.map((bet) => {
+      const details = bets
+        .map((bet) => {
         const payout = getCoverage(bet.type, bet.odds, bet.amount)[side] || 0;
         return {
           text: `${bet.platform}: ${bet.target}`,
           hit: payout > EPS,
           amount: payout,
         };
-      });
+        })
+        .filter((x) => x.hit && Number(x.amount || 0) > EPS);
       const total = Number(strategy.profits?.[key] || 0);
       const match = Number(strategy.match_profits?.[key] || 0);
       const rebate = Number(strategy.rebates?.[key] || strategy.rebate || total - match || 0);
@@ -261,6 +270,7 @@ const HgPlanDetailContent: React.FC<HgPlanDetailContentProps> = ({ matchId, init
         key: side,
         title: outcomeTitle(side),
         color: side === 'W' ? 'blue' : side === 'D' ? 'gold' : 'red',
+        stakeLines,
         details,
         match,
         rebate,
@@ -391,7 +401,7 @@ const HgPlanDetailContent: React.FC<HgPlanDetailContentProps> = ({ matchId, init
         </Title>
       ) : null}
 
-      <Card title="下注方案详情">
+      <Card title="下注方案详情" extra={<BetStakeCalculatorModal strategy={strategy} shares={{ jingcai: jcShare, crown: crownShare }} />}>
         <div style={{ overflowX: 'auto', marginBottom: 16 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <thead>
@@ -427,6 +437,14 @@ const HgPlanDetailContent: React.FC<HgPlanDetailContentProps> = ({ matchId, init
                       <Tag color={r.color}>{r.title}</Tag>
                     </div>
                     <div style={{ borderTop: '1px solid #e8e8e8', margin: '10px 0' }} />
+
+                    {(r.stakeLines || []).map((d: any, idx: number) => (
+                      <div key={`${r.key}_stake_${idx}`} style={{ marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                        <Text style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.text}</Text>
+                        <Text style={{ fontSize: 12, color: '#cf1322', flexShrink: 0 }}>{signedCurrency(d.amount)}</Text>
+                      </div>
+                    ))}
+                    {(r.stakeLines || []).length > 0 ? <div style={{ borderTop: '1px dashed #d9d9d9', margin: '8px 0' }} /> : null}
 
                     {(r.details || []).map((d: any, idx: number) => (
                       <div key={`${r.key}_${idx}`} style={{ marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>

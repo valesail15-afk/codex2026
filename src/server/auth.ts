@@ -25,6 +25,22 @@ export interface AuthRequest extends Request {
   };
 }
 
+type AuthResolvedUser = {
+  id: number;
+  username: string;
+  role: string;
+  sid: string;
+};
+
+type AuthTokenValidationResult =
+  | { ok: true; user: AuthResolvedUser }
+  | {
+      ok: false;
+      code: 'UNAUTHORIZED' | 'USER_NOT_FOUND' | 'SESSION_INVALID' | 'SESSION_EXPIRED' | 'ACCOUNT_LOCKED' | 'ACCOUNT_EXPIRED';
+      lock_until?: string | null;
+      expires_at?: string | null;
+    };
+
 function isExpired(expiresAt?: string | null) {
   if (!expiresAt) return false;
   const t = new Date(expiresAt).getTime();
@@ -32,45 +48,84 @@ function isExpired(expiresAt?: string | null) {
 }
 
 function invalidateAllSessions(userId: number) {
-  db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = ? WHERE user_id = ? AND is_active = 1').run(formatLocalDbDateTime(), userId);
+  db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = ? WHERE user_id = ? AND is_active = 1').run(
+    formatLocalDbDateTime(),
+    userId
+  );
 }
+
+export const validateAuthToken = (
+  token: string,
+  options?: { touchSession?: boolean }
+): AuthTokenValidationResult => {
+  const touchSession = options?.touchSession !== false;
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as any;
+    if (!payload?.id || !payload?.sid) {
+      return { ok: false, code: 'UNAUTHORIZED' };
+    }
+
+    const dbUser = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.id) as any;
+    if (!dbUser) return { ok: false, code: 'USER_NOT_FOUND' };
+
+    const session = db
+      .prepare('SELECT * FROM user_sessions WHERE session_id = ? AND user_id = ? AND is_active = 1')
+      .get(payload.sid, payload.id) as any;
+    if (!session) return { ok: false, code: 'SESSION_INVALID' };
+
+    if (session.expires_at && new Date(session.expires_at).getTime() <= Date.now()) {
+      db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = ? WHERE id = ?').run(formatLocalDbDateTime(), session.id);
+      return { ok: false, code: 'SESSION_EXPIRED' };
+    }
+
+    const lockedByTime = dbUser.lock_until ? new Date(dbUser.lock_until).getTime() > Date.now() : false;
+    if (dbUser.status === 'locked' || dbUser.is_locked || lockedByTime) {
+      return { ok: false, code: 'ACCOUNT_LOCKED', lock_until: dbUser.lock_until || null };
+    }
+
+    if (dbUser.role !== 'Admin' && isExpired(dbUser.expires_at)) {
+      db.prepare("UPDATE users SET status = 'expired', is_locked = 0, updated_at = ? WHERE id = ?").run(
+        formatLocalDbDateTime(),
+        dbUser.id
+      );
+      invalidateAllSessions(dbUser.id);
+      return { ok: false, code: 'ACCOUNT_EXPIRED', expires_at: dbUser.expires_at || null };
+    }
+
+    if (touchSession) {
+      db.prepare('UPDATE user_sessions SET last_activity_at = ? WHERE id = ?').run(formatLocalDbDateTime(), session.id);
+    }
+
+    return {
+      ok: true,
+      user: { id: dbUser.id, username: dbUser.username, role: dbUser.role, sid: payload.sid },
+    };
+  } catch {
+    return { ok: false, code: 'UNAUTHORIZED' };
+  }
+};
 
 export const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction) => {
   const token = req.cookies.token;
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
-  jwt.verify(token, JWT_SECRET, (err: any, payload: any) => {
-    if (err || !payload?.id || !payload?.sid) return res.status(401).json({ error: 'Unauthorized' });
-
-    const dbUser = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.id) as any;
-    if (!dbUser) return res.status(401).json({ error: 'User not found' });
-
-    const session = db
-      .prepare('SELECT * FROM user_sessions WHERE session_id = ? AND user_id = ? AND is_active = 1')
-      .get(payload.sid, payload.id) as any;
-    if (!session) return res.status(401).json({ error: 'Session invalid' });
-
-    if (session.expires_at && new Date(session.expires_at).getTime() <= Date.now()) {
-      db.prepare('UPDATE user_sessions SET is_active = 0, revoked_at = ? WHERE id = ?').run(formatLocalDbDateTime(), session.id);
-      return res.status(401).json({ error: 'Session expired' });
+  const result = validateAuthToken(token, { touchSession: true });
+  if (!result.ok) {
+    const failed = result as Exclude<AuthTokenValidationResult, { ok: true; user: AuthResolvedUser }>;
+    if (failed.code === 'ACCOUNT_LOCKED') {
+      return res.status(403).json({ error: 'Account locked', code: 'ACCOUNT_LOCKED', lock_until: failed.lock_until || null });
     }
-
-    const lockedByTime = dbUser.lock_until ? new Date(dbUser.lock_until).getTime() > Date.now() : false;
-    if (dbUser.status === 'locked' || dbUser.is_locked || lockedByTime) {
-      return res.status(403).json({ error: 'Account locked', code: 'ACCOUNT_LOCKED', lock_until: dbUser.lock_until || null });
+    if (failed.code === 'ACCOUNT_EXPIRED') {
+      return res.status(403).json({ error: 'Account expired', code: 'ACCOUNT_EXPIRED', expires_at: failed.expires_at || null });
     }
+    if (failed.code === 'USER_NOT_FOUND') return res.status(401).json({ error: 'User not found' });
+    if (failed.code === 'SESSION_INVALID') return res.status(401).json({ error: 'Session invalid' });
+    if (failed.code === 'SESSION_EXPIRED') return res.status(401).json({ error: 'Session expired' });
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
 
-    if (dbUser.role !== 'Admin' && isExpired(dbUser.expires_at)) {
-      db.prepare("UPDATE users SET status = 'expired', is_locked = 0, updated_at = ? WHERE id = ?").run(formatLocalDbDateTime(), dbUser.id);
-      invalidateAllSessions(dbUser.id);
-      return res.status(403).json({ error: 'Account expired', code: 'ACCOUNT_EXPIRED', expires_at: dbUser.expires_at });
-    }
-
-    db.prepare('UPDATE user_sessions SET last_activity_at = ? WHERE id = ?').run(formatLocalDbDateTime(), session.id);
-    // 权限以数据库实时角色为准，避免 token 内旧 role 导致越权
-    req.user = { id: dbUser.id, username: dbUser.username, role: dbUser.role, sid: payload.sid };
-    next();
-  });
+  req.user = result.user;
+  next();
 };
 
 export const authorizeAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -83,7 +138,14 @@ export const generateToken = (user: { id: number; username: string; role: string
 };
 
 export const logAction = (userId: number | null, username: string | null, action: string, content: string, ip: string) => {
-  db.prepare('INSERT INTO logs (user_id, username, action, content, ip, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(userId, username, action, content, ip, formatLocalDbDateTime());
+  db.prepare('INSERT INTO logs (user_id, username, action, content, ip, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+    userId,
+    username,
+    action,
+    content,
+    ip,
+    formatLocalDbDateTime()
+  );
 };
 
 export const revokeSession = (sessionId: string) => {
@@ -93,4 +155,3 @@ export const revokeSession = (sessionId: string) => {
 export const revokeAllUserSessions = (userId: number) => {
   invalidateAllSessions(userId);
 };
-

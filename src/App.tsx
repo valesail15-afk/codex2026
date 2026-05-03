@@ -10,6 +10,7 @@ import {
   ClockCircleOutlined,
 } from '@ant-design/icons';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, Navigate, useNavigate } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import axios from 'axios';
 import Dashboard from './pages/Dashboard';
 import MatchList from './pages/MatchList';
@@ -284,6 +285,8 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const { user, logout, remainingSeconds } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const siderWidth = 200;
+  const siderCollapsedWidth = 80;
 
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -319,7 +322,23 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider collapsible collapsed={collapsed} onCollapse={(value) => setCollapsed(value)} theme="dark">
+      <Sider
+        collapsible
+        collapsed={collapsed}
+        onCollapse={(value) => setCollapsed(value)}
+        theme="dark"
+        width={siderWidth}
+        collapsedWidth={siderCollapsedWidth}
+        style={{
+          position: 'fixed',
+          left: 0,
+          top: 0,
+          bottom: 0,
+          zIndex: 1000,
+          overflow: 'auto',
+          height: '100vh',
+        }}
+      >
         <div
           style={{
             height: 64,
@@ -337,7 +356,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         </div>
         <Menu theme="dark" selectedKeys={[selectedMenuKey]} mode="inline" items={menuItems} />
       </Sider>
-      <Layout>
+      <Layout style={{ marginLeft: collapsed ? siderCollapsedWidth : siderWidth, transition: 'margin-left 0.2s' }}>
         <Header
           style={{
             padding: '0 24px',
@@ -391,62 +410,72 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; adminOnly?: boolean 
   return <>{children}</>;
 };
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
+
 export default function App() {
   return (
-    <ConfigProvider
-      theme={{
-        algorithm: theme.defaultAlgorithm,
-        token: {
-          colorPrimary: '#1890ff',
-          borderRadius: 8,
-        },
-      }}
-    >
-      <AntApp>
-        <Router>
-          <AuthProvider>
-            <ErrorBoundary>
-              <Routes>
-                <Route
-                  path="/login"
-                  element={
-                    <AuthContext.Consumer>
-                      {(auth) => (auth?.user ? <Navigate to="/" replace /> : <Login onLoginSuccess={async () => auth && (await auth.login())} />)}
-                    </AuthContext.Consumer>
-                  }
-                />
-                <Route
-                  path="/*"
-                  element={
-                    <ProtectedRoute>
-                      <AppLayout>
-                        <Routes>
-                          <Route path="/" element={<Dashboard />} />
-                          <Route path="/matches" element={<MatchList />} />
-                          <Route path="/calculator" element={<Calculator />} />
-                          <Route path="/calculator/:matchId" element={<Calculator />} />
-                          <Route path="/calculator/parlay/:id" element={<ParlayCalculator />} />
-                          <Route path="/settings" element={<Settings />} />
-                          <Route path="/settings/hga-team-aliases" element={<HgaTeamAliasSettings />} />
-                          <Route
-                            path="/admin/users"
-                            element={
-                              <ProtectedRoute adminOnly>
-                                <UserManagement />
-                              </ProtectedRoute>
-                            }
-                          />
-                        </Routes>
-                      </AppLayout>
-                    </ProtectedRoute>
-                  }
-                />
-              </Routes>
-            </ErrorBoundary>
-          </AuthProvider>
-        </Router>
-      </AntApp>
-    </ConfigProvider>
+    <QueryClientProvider client={queryClient}>
+      <ConfigProvider
+        theme={{
+          algorithm: theme.defaultAlgorithm,
+          token: {
+            colorPrimary: '#1890ff',
+            borderRadius: 8,
+          },
+        }}
+      >
+        <AntApp>
+          <Router>
+            <AuthProvider>
+              <ErrorBoundary>
+                <Routes>
+                  <Route
+                    path="/login"
+                    element={
+                      <AuthContext.Consumer>
+                        {(auth) => (auth?.user ? <Navigate to="/" replace /> : <Login onLoginSuccess={async () => auth && (await auth.login())} />)}
+                      </AuthContext.Consumer>
+                    }
+                  />
+                  <Route
+                    path="/*"
+                    element={
+                      <ProtectedRoute>
+                        <AppLayout>
+                          <Routes>
+                            <Route path="/" element={<Dashboard />} />
+                            <Route path="/matches" element={<MatchList />} />
+                            <Route path="/calculator" element={<Calculator />} />
+                            <Route path="/calculator/:matchId" element={<Calculator />} />
+                            <Route path="/calculator/parlay/:id" element={<ParlayCalculator />} />
+                            <Route path="/settings" element={<Settings />} />
+                            <Route path="/settings/hga-team-aliases" element={<HgaTeamAliasSettings />} />
+                            <Route
+                              path="/admin/users"
+                              element={
+                                <ProtectedRoute adminOnly>
+                                  <UserManagement />
+                                </ProtectedRoute>
+                              }
+                            />
+                          </Routes>
+                        </AppLayout>
+                      </ProtectedRoute>
+                    }
+                  />
+                </Routes>
+              </ErrorBoundary>
+            </AuthProvider>
+          </Router>
+        </AntApp>
+      </ConfigProvider>
+    </QueryClientProvider>
   );
 }
-

@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Card, Col, Empty, InputNumber, Row, Select, Space, Tag, Typography } from 'antd';
 import axios from 'axios';
 import type { HedgeStrategy } from '../types';
-import { normalizeCrownTarget, normalizeParlaySideLabel, parseCrownBetType, parseParlayRawSide, sideToLabel } from '../shared/oddsText';
+import { normalizeCrownTarget, normalizeParlaySideLabel, parseParlayRawSide, sideToLabel } from '../shared/oddsText';
+import { parseCrownBetTypeCompat } from '../shared/crownBetTypeCompat';
+import BetStakeCalculatorModal from './BetStakeCalculatorModal';
 
 const { Title, Text } = Typography;
 
@@ -57,16 +59,16 @@ const calcGrossReturnByGoalDiff = (
 
   if (pick.side === 'D') {
     const score = h - Math.abs(dg);
-    if (score >= 0.5) return a * o;
-    if (score === 0.25) return a * ((o + 1) / 2);
+    if (score >= 0.5) return a * (1 + o);
+    if (score === 0.25) return a * (1 + o / 2);
     if (score === 0) return a;
     if (score === -0.25) return a * 0.5;
     return 0;
   }
 
   const score = pick.side === 'W' ? dg + h : -dg + h;
-  if (score >= 0.5) return a * o;
-  if (score === 0.25) return a * ((o + 1) / 2);
+  if (score >= 0.5) return a * (1 + o);
+  if (score === 0.25) return a * (1 + o / 2);
   if (score === 0) return a;
   if (score === -0.25) return a * 0.5;
   return 0;
@@ -93,7 +95,7 @@ const calcSettleRatioByGoalDiff = (
 };
 
 const parseCrownBetSide = (raw: string): { side: MatchOutcome; handicap?: number; isStandard: boolean } => {
-  const parsed = parseCrownBetType(raw);
+  const parsed = parseCrownBetTypeCompat(raw);
   const side: MatchOutcome = parsed.side === 'home' ? 'W' : parsed.side === 'draw' ? 'D' : 'L';
   return { side, handicap: parsed.handicap, isStandard: parsed.kind === 'std' };
 };
@@ -159,8 +161,12 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
         crownRebate: Number(settingRes.data?.default_crown_rebate || 0.02),
       });
 
-    } catch {
-      message.error('加载二串一方案失败');
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        message.warning('该二串一方案已过期，请刷新列表获取最新机会');
+      } else {
+        message.error(`加载二串一方案失败: ${err.response?.data?.error || err.message}`);
+      }
       setRecord(null);
       setSelected(null);
       if (!loadedNotifiedRef.current) {
@@ -285,6 +291,24 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
     ];
   }, [parsedSides, record, selectedStrategy, settingsMeta, tempSecondCrownOdds]);
 
+  const parlayPrimaryBetDisplay = useMemo(() => {
+    if (!record) return undefined;
+    const combinedOdds = parsedSides.jcOdds1 > 0 && parsedSides.jcOdds2 > 0
+      ? parsedSides.jcOdds1 * parsedSides.jcOdds2
+      : Number(record?.combined_odds || 0);
+
+    return {
+      target: `${normalizeParlaySideLabel(record?.side_1 || '-')} × ${normalizeParlaySideLabel(record?.side_2 || '-')}`,
+      odds: combinedOdds,
+      oddsDisplay:
+        parsedSides.jcOdds1 > 0 && parsedSides.jcOdds2 > 0
+          ? `${parsedSides.jcOdds1.toFixed(2)} × ${parsedSides.jcOdds2.toFixed(2)} = ${combinedOdds.toFixed(2)}`
+          : combinedOdds > 0
+          ? combinedOdds.toFixed(2)
+          : '-',
+    };
+  }, [parsedSides, record]);
+
   const outcomeRows = useMemo(() => {
     if (!selectedStrategy || !record) return [] as any[];
 
@@ -302,13 +326,13 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
 
     const titleMap: Record<string, string> = {
       w_w: '第一场主胜 + 第二场主胜',
-      w_d: '第一场主胜 + 第二场平',
+      w_d: '第一场主胜 + 第二场平局',
       w_l: '第一场主胜 + 第二场客胜',
-      d_w: '第一场平 + 第二场主胜',
-      d_d: '第一场平 + 第二场平',
-      d_l: '第一场平 + 第二场客胜',
+      d_w: '第一场平局 + 第二场主胜',
+      d_d: '第一场平局 + 第二场平局',
+      d_l: '第一场平局 + 第二场客胜',
       l_w: '第一场客胜 + 第二场主胜',
-      l_d: '第一场客胜 + 第二场平',
+      l_d: '第一场客胜 + 第二场平局',
       l_l: '第一场客胜 + 第二场客胜',
     };
 
@@ -416,7 +440,7 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
 
   const firstStageRows = useMemo(() => {
     const sideOrder: MatchOutcome[] = ['W', 'D', 'L'];
-    const titleMap: Record<MatchOutcome, string> = { W: '第一场主胜', D: '第一场平', L: '第一场客胜' };
+    const titleMap: Record<MatchOutcome, string> = { W: '第一场主胜', D: '第一场平局', L: '第一场客胜' };
     return sideOrder.map((side) => {
       const rows = outcomeRows.filter((r: any) => r.first === side);
       if (!rows.length) {
@@ -679,7 +703,7 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
       const matchIndex = Number(bet.match_index) === 1 ? 1 : 0;
       const meta = matchMeta[matchIndex];
       const section = sections[matchIndex];
-      const parsed = parseCrownBetType(normalizeCrownTarget(String(bet.type || '')));
+      const parsed = parseCrownBetTypeCompat(normalizeCrownTarget(String(bet.type || '')));
       const side: MatchOutcome = parsed.side === 'home' ? 'W' : parsed.side === 'draw' ? 'D' : 'L';
       const crownPool = parsed.kind === 'ah' ? meta.crownHandicap : meta.crownStandard;
 
@@ -761,15 +785,16 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <Text style={metricLabelStyle}>胜负收益:</Text>
+              <Text style={metricLabelStyle}>中奖收益:</Text>
               <Text style={metricValueStyle}>{signedCurrency(row.winLossProfit)}</Text>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <Text style={metricLabelStyle}>返水收益:</Text>
               <Text style={metricValueStyle}>{signedCurrency(row.rebate)}</Text>
             </div>
+            <div style={{ borderTop: '1px dashed #d9d9d9', margin: '8px 0' }} />
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <Text strong style={metricLabelStyle}>总利润:</Text>
+              <Text strong style={metricLabelStyle}>总收益:</Text>
               <Text strong style={metricValueStyle}>{signedCurrency(row.total)}</Text>
             </div>
           </div>
@@ -794,6 +819,11 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
           title="下注方案详情"
           extra={
             <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+              <BetStakeCalculatorModal
+                strategy={selectedStrategy}
+                primaryBetDisplay={parlayPrimaryBetDisplay}
+                shares={{ jingcai: settingsMeta.jcShare, crown: settingsMeta.crownShare }}
+              />
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 220 }}>
                 <div style={{ fontSize: 13, color: '#595959', whiteSpace: 'nowrap' }}>基准平台</div>
                 <Select
@@ -1035,4 +1065,3 @@ const ParlayPlanDetailContent: React.FC<ParlayPlanDetailContentProps> = ({
 };
 
 export default ParlayPlanDetailContent;
-

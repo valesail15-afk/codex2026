@@ -1,6 +1,6 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, App, Button, Card, Col, Divider, Form, Input, InputNumber, Radio, Row, Space, Switch, Tag, Typography } from 'antd';
-import { SaveOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { DownloadOutlined, SaveOutlined, SafetyCertificateOutlined, UploadOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import { AuthContext } from '../App';
 import { useNavigate } from 'react-router-dom';
@@ -8,17 +8,26 @@ import { useNavigate } from 'react-router-dom';
 const { Title, Text } = Typography;
 
 type HgaAliasRow = {
-  trade500_name: string;
-  hga_name: string;
+  jingcai_name: string;
+  huangguan_name: string;
+};
+
+type HgaTuningParams = {
+  login_timeout_ms: number;
+  list_timeout_ms: number;
+  market_item_timeout_ms: number;
+  obt_batch_size: number;
+  obt_batch_retry: number;
+  obt_concurrency: number;
 };
 
 function parseHgaAliasMap(raw: unknown): HgaAliasRow[] {
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
-    return Object.entries(parsed).map(([trade500_name, hga_name]) => ({
-      trade500_name: String(trade500_name || '').trim(),
-      hga_name: String(hga_name || '').trim(),
+    return Object.entries(parsed).map(([jingcai_name, huangguan_name]) => ({
+      jingcai_name: String(jingcai_name || '').trim(),
+      huangguan_name: String(huangguan_name || '').trim(),
     }));
   } catch {
     return [];
@@ -27,10 +36,10 @@ function parseHgaAliasMap(raw: unknown): HgaAliasRow[] {
 
 function buildHgaAliasMap(rows: HgaAliasRow[] = []) {
   return rows.reduce<Record<string, string>>((acc, row) => {
-    const trade500Name = String(row?.trade500_name || '').trim();
-    const hgaName = String(row?.hga_name || '').trim();
-    if (!trade500Name || !hgaName) return acc;
-    acc[trade500Name] = hgaName;
+    const jingcaiName = String((row as any)?.jingcai_name || (row as any)?.trade500_name || '').trim();
+    const huangguanName = String((row as any)?.huangguan_name || (row as any)?.hga_name || '').trim();
+    if (!jingcaiName || !huangguanName) return acc;
+    acc[jingcaiName] = huangguanName;
     return acc;
   }, {});
 }
@@ -42,11 +51,44 @@ const Settings: React.FC = () => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [testingHga, setTestingHga] = useState(false);
+  const [optimizingHga, setOptimizingHga] = useState(false);
+  const [hgaAvgFetchSeconds, setHgaAvgFetchSeconds] = useState<number>(0);
   const [defaultHgaAliasRows, setDefaultHgaAliasRows] = useState<HgaAliasRow[]>([]);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [hgaMeta, setHgaMeta] = useState({
     status: 'unknown',
     statusMessage: '',
     passwordConfigured: false,
+  });
+  const [syncSnapshotMeta, setSyncSnapshotMeta] = useState({
+    status: 'unknown',
+    message: '',
+    lastDecisionAt: '',
+  });
+  const [hgaTuningMeta, setHgaTuningMeta] = useState<{
+    effective: HgaTuningParams;
+    persisted: HgaTuningParams;
+    lastOptimizeAt: string;
+    lastBestScore: number;
+  }>({
+    effective: {
+      login_timeout_ms: 25000,
+      list_timeout_ms: 30000,
+      market_item_timeout_ms: 22000,
+      obt_batch_size: 8,
+      obt_batch_retry: 2,
+      obt_concurrency: 2,
+    },
+    persisted: {
+      login_timeout_ms: 25000,
+      list_timeout_ms: 30000,
+      market_item_timeout_ms: 22000,
+      obt_batch_size: 8,
+      obt_batch_retry: 2,
+      obt_concurrency: 2,
+    },
+    lastOptimizeAt: '',
+    lastBestScore: 0,
   });
   const sessionMode = Form.useWatch('session_mode', form) || 'single';
   const hgaTeamAliasRows = Form.useWatch('hga_team_alias_rows', form) || [];
@@ -69,61 +111,95 @@ const Settings: React.FC = () => {
     if (hgaMeta.status === 'missing') return 'warning' as const;
     return 'error' as const;
   }, [hgaMeta.status]);
+  const syncSnapshotStatusMeta = useMemo(() => {
+    const map: Record<string, { color: string; label: string }> = {
+      applied: { color: 'green', label: '成功切换' },
+      guarded: { color: 'red', label: '已保护回退' },
+      unknown: { color: 'default', label: '未知' },
+    };
+    return map[syncSnapshotMeta.status] || map.unknown;
+  }, [syncSnapshotMeta.status]);
+  const hgaAvgFetchText = hgaAvgFetchSeconds > 0 ? `HGA平均抓取时间“${hgaAvgFetchSeconds}”秒` : '';
+
+  const applySettingsData = (data: any) => {
+    form.setFieldsValue({
+      auto_scan: false,
+      sound_alert: false,
+      scan_interval: 180,
+      min_profit_alert: 0.5,
+      login_lock_short_minutes: 10,
+      login_lock_long_minutes: 120,
+      session_mode: 'single',
+      max_sessions: 1,
+      hga_enabled: false,
+      hga_username: '',
+      hga_password_configured: false,
+      hga_status: 'unknown',
+      hga_status_message: '',
+      hga_team_alias_rows: parseHgaAliasMap(data.hga_team_alias_map),
+      ...data,
+    });
+    setDefaultHgaAliasRows(parseHgaAliasMap(data.hga_team_alias_map_default));
+    setHgaAvgFetchSeconds(Number(data.hga_avg_fetch_seconds || 0));
+    setHgaMeta({
+      status: String(data.hga_status || 'unknown'),
+      statusMessage: String(data.hga_status_message || ''),
+      passwordConfigured: Boolean(data.hga_password_configured),
+    });
+    setSyncSnapshotMeta({
+      status: String(data.sync_snapshot_status || 'unknown'),
+      message: String(data.sync_snapshot_message || ''),
+      lastDecisionAt: String(data.sync_snapshot_last_decision_at || ''),
+    });
+    const effective = data.hga_tuning_effective || {};
+    const persisted = data.hga_tuning_persisted || {};
+    const lastOpt = data.hga_tune_last_optimize_result || {};
+    setHgaTuningMeta({
+      effective: {
+        login_timeout_ms: Number(effective.login_timeout_ms || 25000),
+        list_timeout_ms: Number(effective.list_timeout_ms || 30000),
+        market_item_timeout_ms: Number(effective.market_item_timeout_ms || 22000),
+        obt_batch_size: Number(effective.obt_batch_size || 8),
+        obt_batch_retry: Number(effective.obt_batch_retry || 2),
+        obt_concurrency: Number(effective.obt_concurrency || 2),
+      },
+      persisted: {
+        login_timeout_ms: Number(persisted.login_timeout_ms || 25000),
+        list_timeout_ms: Number(persisted.list_timeout_ms || 30000),
+        market_item_timeout_ms: Number(persisted.market_item_timeout_ms || 22000),
+        obt_batch_size: Number(persisted.obt_batch_size || 8),
+        obt_batch_retry: Number(persisted.obt_batch_retry || 2),
+        obt_concurrency: Number(persisted.obt_concurrency || 2),
+      },
+      lastOptimizeAt: String(lastOpt.ran_at || ''),
+      lastBestScore: Number(lastOpt.best_score || 0),
+    });
+  };
+
+  const refreshSettings = async () => {
+    const res = await axios.get('/api/settings');
+    const data = { ...res.data };
+    applySettingsData(data);
+  };
 
   useEffect(() => {
-    const fetchSettings = async () => {
-      const res = await axios.get('/api/settings');
-      const data = { ...res.data };
-      form.setFieldsValue({
-        auto_scan: false,
-        sound_alert: false,
-        scan_interval: 180,
-        min_profit_alert: 0.5,
-        login_lock_short_minutes: 10,
-        login_lock_long_minutes: 120,
-        session_mode: 'single',
-        max_sessions: 1,
-        hga_enabled: false,
-        hga_username: '',
-        hga_password_configured: false,
-        hga_status: 'unknown',
-        hga_status_message: '',
-        hga_team_alias_rows: parseHgaAliasMap(data.hga_team_alias_map),
-        ...data,
-      });
-      setDefaultHgaAliasRows(parseHgaAliasMap(data.hga_team_alias_map_default));
-      setHgaMeta({
-        status: String(data.hga_status || 'unknown'),
-        statusMessage: String(data.hga_status_message || ''),
-        passwordConfigured: Boolean(data.hga_password_configured),
-      });
-    };
-    fetchSettings().catch(() => {});
+    refreshSettings().catch(() => {});
   }, [form]);
 
   const onSave = async (values: any) => {
     setLoading(true);
     try {
       const payload = { ...values };
-      payload.hga_team_alias_map = JSON.stringify(buildHgaAliasMap(values.hga_team_alias_rows || []), null, 2);
       delete payload.hga_team_alias_rows;
       delete payload.hga_status;
       delete payload.hga_status_message;
       delete payload.hga_password_configured;
       delete payload.hga_blocked_until;
+      delete payload.sync_snapshot_status;
+      delete payload.sync_snapshot_message;
+      delete payload.sync_snapshot_last_decision_at;
       await axios.post('/api/settings', payload);
-      const refreshed = await axios.get('/api/settings');
-      const data = { ...refreshed.data };
-      form.setFieldsValue({
-        hga_team_alias_rows: parseHgaAliasMap(data.hga_team_alias_map),
-        ...data,
-      });
-      setDefaultHgaAliasRows(parseHgaAliasMap(data.hga_team_alias_map_default));
-      setHgaMeta({
-        status: String(data.hga_status || 'unknown'),
-        statusMessage: String(data.hga_status_message || ''),
-        passwordConfigured: Boolean(data.hga_password_configured),
-      });
+      await refreshSettings();
       message.success('系统设置已保存');
     } catch {
       message.error('保存失败');
@@ -170,6 +246,86 @@ const Settings: React.FC = () => {
     }
   };
 
+  const onOptimizeHgaParams = async () => {
+    setOptimizingHga(true);
+    try {
+      const res = await axios.post('/api/settings/hga/optimize-tuning', {
+        rounds: 4,
+        sample_size: 12,
+      });
+      const best = res.data?.best || {};
+      const durationSec = Number(best.duration_ms || 0) > 0 ? (Number(best.duration_ms || 0) / 1000).toFixed(1) : '-';
+      const bestScore = Number(best.score || 0);
+      if (bestScore <= -900000) {
+        message.warning(`HGA 参数自动优化完成，但全部轮次失败（最佳轮次耗时 ${durationSec}s）`);
+      } else {
+        message.success(`HGA 参数自动优化完成，最佳轮次耗时 ${durationSec}s，评分 ${bestScore}`);
+      }
+      await refreshSettings();
+    } catch (err: any) {
+      const errMessage = String(err?.response?.data?.message || err?.message || 'HGA 参数自动优化失败');
+      message.error(errMessage);
+    } finally {
+      setOptimizingHga(false);
+    }
+  };
+
+  const hgaBestScoreText = useMemo(() => {
+    if (hgaTuningMeta.lastBestScore <= -900000) return '优化失败（全部轮次失败）';
+    return String(hgaTuningMeta.lastBestScore || 0);
+  }, [hgaTuningMeta.lastBestScore]);
+
+  const onExportHgaAliasMap = async () => {
+    try {
+      const formRows = form.getFieldValue('hga_team_alias_rows');
+      const rows = Array.isArray(formRows) && formRows.length > 0
+        ? formRows
+        : Array.isArray(hgaTeamAliasRows) && hgaTeamAliasRows.length > 0
+          ? hgaTeamAliasRows
+          : defaultHgaAliasRows;
+      const map = buildHgaAliasMap(rows || []);
+      const text = `${JSON.stringify(map, null, 2)}\n`;
+      const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `hga-team-alias-map-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      message.success(`HGA 球队别名映射已导出（${Object.keys(map).length} 条）`);
+    } catch {
+      message.error('导出失败');
+    }
+  };
+
+  const onClickImportHgaAliasMap = () => {
+    importInputRef.current?.click();
+  };
+
+  const onImportHgaAliasMap: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
+    const input = event.target;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    setLoading(true);
+    try {
+      const text = await file.text();
+      const sanitized = String(text || '').replace(/^\uFEFF/, '').trim();
+      const parsed = JSON.parse(sanitized);
+      const mapText = JSON.stringify(parsed, null, 2);
+      await axios.post('/api/settings', { hga_team_alias_map: mapText });
+      await refreshSettings();
+      message.success('HGA 球队别名映射导入成功');
+    } catch (err: any) {
+      const msg = String(err?.response?.data?.message || err?.message || '导入失败，请上传有效 JSON 文件');
+      message.error(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div style={{ maxWidth: 1080, margin: '0 auto' }}>
       <Title level={3} style={{ marginBottom: 24 }}>
@@ -199,6 +355,24 @@ const Settings: React.FC = () => {
                   <Form.Item label="同步间隔 (秒)" name="scan_interval" rules={[{ required: true }]}>
                     <InputNumber min={60} max={3600} style={{ width: '100%' }} />
                   </Form.Item>
+                  {hgaAvgFetchText ? (
+                    <Text type="secondary" style={{ display: 'block', marginTop: -16 }}>
+                      {hgaAvgFetchText}
+                    </Text>
+                  ) : null}
+                  <Space direction="vertical" size={6} style={{ display: 'flex', marginTop: hgaAvgFetchText ? 6 : -16 }}>
+                    <Tag color={syncSnapshotStatusMeta.color} style={{ width: 'fit-content', marginInlineEnd: 0 }}>
+                      {`快照生效状态：${syncSnapshotStatusMeta.label}`}
+                    </Tag>
+                    <Text type="secondary">
+                      {syncSnapshotMeta.lastDecisionAt
+                        ? `最近判定时间：${String(syncSnapshotMeta.lastDecisionAt).replace('T', ' ').slice(0, 19)}`
+                        : '最近判定时间：-'}
+                    </Text>
+                    <Text type={syncSnapshotMeta.status === 'guarded' ? 'danger' : 'secondary'}>
+                      {syncSnapshotMeta.message || '暂无快照判定信息'}
+                    </Text>
+                  </Space>
                 </Col>
               </Row>
 
@@ -251,10 +425,53 @@ const Settings: React.FC = () => {
                   <Form.Item
                     label={
                       <Space size={8}>
+                        <span>HGA 参数自动优化</span>
+                        <Button size="small" loading={optimizingHga} onClick={onOptimizeHgaParams}>
+                          自动优化
+                        </Button>
+                      </Space>
+                    }
+                    extra="会进行多轮在线抓取测试，自动选择成功率和速度综合最优参数，并持久化到后台。"
+                  >
+                    <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 12, background: '#fafafa' }}>
+                      <Space direction="vertical" size={4}>
+                        <Text>
+                          当前参数：login={hgaTuningMeta.effective.login_timeout_ms}ms，list={hgaTuningMeta.effective.list_timeout_ms}ms，
+                          market={hgaTuningMeta.effective.market_item_timeout_ms}ms，batch={hgaTuningMeta.effective.obt_batch_size}，
+                          retry={hgaTuningMeta.effective.obt_batch_retry}，concurrency={hgaTuningMeta.effective.obt_concurrency}
+                        </Text>
+                        <Text type="secondary">
+                          最近优化时间：{hgaTuningMeta.lastOptimizeAt ? hgaTuningMeta.lastOptimizeAt.replace('T', ' ').slice(0, 19) : '-'}，
+                          最佳评分：{hgaBestScoreText}
+                        </Text>
+                      </Space>
+                    </div>
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Row gutter={16}>
+                <Col xs={24}>
+                  <Form.Item
+                    label={
+                      <Space size={8}>
                         <span>HGA 球队别名映射</span>
                         <Button size="small" onClick={() => navigate('/settings/hga-team-aliases')}>
                           进入编辑
                         </Button>
+                        <Button size="small" icon={<DownloadOutlined />} onClick={onExportHgaAliasMap}>
+                          导出数据
+                        </Button>
+                        <Button size="small" icon={<UploadOutlined />} onClick={onClickImportHgaAliasMap}>
+                          导入数据
+                        </Button>
+                        <input
+                          ref={importInputRef}
+                          type="file"
+                          accept=".json,application/json"
+                          style={{ display: 'none' }}
+                          onChange={onImportHgaAliasMap}
+                        />
                       </Space>
                     }
                     extra="映射维护已拆到独立二级页面，便于集中查看、编辑和恢复默认映射。"
